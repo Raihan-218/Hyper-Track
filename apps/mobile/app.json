@@ -5,11 +5,12 @@
     "scheme": "hypertrack",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      "expo-notifications",
       "expo-status-bar"
     ],
     "experiments": {

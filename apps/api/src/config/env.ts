@@ -6,8 +6,12 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   MONGODB_URI: z.string().min(1),
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
-  JWT_EXPIRES_IN: z.string().default("1d"),
-  CORS_ORIGIN: z.string().default("http://localhost:8081")
+  JWT_EXPIRES_IN: z.string().default("15m"),
+  CORS_ORIGIN: z.string().default("http://localhost:8081"),
+  XP_REWARD_TASK: z.coerce.number().int().min(0).max(10000).default(10),
+  XP_REWARD_HIGH_PRIORITY_TASK: z.coerce.number().int().min(0).max(10000).default(15),
+  XP_REWARD_HABIT: z.coerce.number().int().min(0).max(10000).default(10),
+  XP_REWARD_MILESTONE: z.coerce.number().int().min(0).max(10000).default(50)
 });
 
 const parsed = envSchema.safeParse(process.env);

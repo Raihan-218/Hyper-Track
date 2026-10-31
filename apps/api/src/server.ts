@@ -7,6 +7,13 @@ import { connectDatabase } from "./config/db.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { tasksRouter } from "./routes/tasks.routes.js";
 import { habitsRouter } from "./routes/habits.routes.js";
+import { progressRouter } from "./routes/progress.routes.js";
+import { goalsRouter } from "./routes/goals.routes.js";
+import { projectsRouter } from "./routes/projects.routes.js";
+import { calendarRouter } from "./routes/calendar.routes.js";
+import { gamificationRouter } from "./routes/gamification.routes.js";
+import { focusRouter } from "./routes/focus.routes.js";
+import { exportRouter } from "./routes/export.routes.js";
 import { errorHandler, notFound } from "./middleware/errors.js";
 
 const app = express();
@@ -19,6 +26,13 @@ app.get("/health", (_req, res) => res.json({ status: "ok", service: "hyper-track
 app.use("/api/auth", authRouter);
 app.use("/api/tasks", tasksRouter);
 app.use("/api/habits", habitsRouter);
+app.use("/api/progress", progressRouter);
+app.use("/api/goals", goalsRouter);
+app.use("/api/projects", projectsRouter);
+app.use("/api/calendar", calendarRouter);
+app.use("/api/gamification", gamificationRouter);
+app.use("/api/focus", focusRouter);
+app.use("/api/data-export", exportRouter);
 app.use(notFound);
 app.use(errorHandler);
 

@@ -9,7 +9,9 @@
   "scripts": {
     "dev:api": "npm run dev -w @hyper-track/api",
     "dev:mobile": "npm run start -w @hyper-track/mobile",
-    "typecheck": "npm run typecheck -w @hyper-track/api && npm run typecheck -w @hyper-track/mobile"
+    "typecheck": "npm run typecheck -w @hyper-track/api && npm run typecheck -w @hyper-track/mobile",
+    "test:api": "npm run test -w @hyper-track/api",
+    "validate:expo": "npm run validate:config -w @hyper-track/mobile"
   },
   "dependencies": {
     "expo": "~58.0.20",
