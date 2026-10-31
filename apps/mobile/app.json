@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Hyper Track",
+    "slug": "hyper-track",
+    "scheme": "hypertrack",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-status-bar"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "android": {
+      "package": "com.hypertrack.app"
+    },
+    "ios": {
+      "bundleIdentifier": "com.hypertrack.app",
+      "supportsTablet": true
+    }
+  }
+}
