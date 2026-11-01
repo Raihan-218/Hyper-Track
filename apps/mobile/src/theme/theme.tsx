@@ -3,8 +3,24 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useColorScheme } from "react-native";
 
 export type ThemeMode = "system" | "light" | "dark";
+export type ResolvedTheme = "light" | "dark";
 
-export const palettes = {
+export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32 } as const;
+export const radii = { sm: 8, md: 12, lg: 16, xl: 20, pill: 999 } as const;
+export const fontSizes = { caption: 11, small: 13, body: 15, subtitle: 18, title: 24, display: 32 } as const;
+export const motion = { fast: 140, normal: 220, slow: 320 } as const;
+
+export type ColorPalette = {
+  mode: ResolvedTheme;
+  background: string; surface: string; surfaceRaised: string; surfaceMuted: string;
+  text: string; textMuted: string; textFaint: string; border: string;
+  primary: string; primarySoft: string; onPrimary: string;
+  success: string; successSoft: string; warning: string; warningSoft: string;
+  danger: string; dangerSoft: string; low: string; medium: string; high: string;
+  shadow: string; overlay: string;
+};
+
+export const palettes: Record<ResolvedTheme, ColorPalette> = {
   light: {
     mode: "light" as const,
     background: "#F4F6FA", surface: "#FFFFFF", surfaceRaised: "#FFFFFF", surfaceMuted: "#EAF0F7",
@@ -25,7 +41,7 @@ export const palettes = {
   }
 } as const;
 
-export type AppColors = (typeof palettes)[keyof typeof palettes];
+export type AppColors = ColorPalette;
 type ThemeContextValue = { mode: ThemeMode; setMode: (mode: ThemeMode) => void; colors: AppColors };
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 const MODE_KEY = "hyper_track_theme_mode";

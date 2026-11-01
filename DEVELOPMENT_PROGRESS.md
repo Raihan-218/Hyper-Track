@@ -7,7 +7,7 @@ Updated 2026-11-01
 | Phase | Status | Delivered in this pass | Remaining work |
 | --- | --- | --- | --- |
 | 0. Product audit | Complete | Repository, UX, API/data model, risk, and phased roadmap assessment presented before implementation. | None for the initial assessment. |
-| 1. Design system and UI | Foundation in place | Shared palette and UI primitives; persisted system/light/dark preference; five-destination bottom navigation; personalized greeting, local date, daily progress, XP, and streak summary. | Apply tokens consistently across all legacy styles; split the large route component; add motion/loading skeletons; run device accessibility and layout review. |
+| 1. Design system and UI | Foundation and dashboard delivered | Semantic color palette and shared spacing/type/radius/motion tokens; responsive `AppShell`; extracted responsive dashboard with authoritative XP progress, current-state day metrics, priority/deadline/habit panels, and event-backed weekly activity; animated XP and completion feedback. | Apply tokens across legacy non-dashboard screens; progressively extract remaining screens; add loading skeletons; review layouts and accessibility on devices. |
 | 2. Calendar and history | Core APIs and screen in place | Month/week/day selection, activity markers, future task planning, task plan snapshots, completion/reversal events, habit schedule snapshots, timezone-aware day boundaries, idempotent legacy backfill. | Before migration, the old schema cannot recover prior task cycles, plan changes, or schedule changes. Historical pending/overdue and reflection UI need additional work. Run migration on a database backup and verify against real accounts. |
 | 3. Gamification | Core loop in place | Backend XP ledger, duplicate-safe awards, undo reversals, level thresholds, milestone rewards, achievement criteria, daily challenge summary, profile gallery. | Configurable reward storage, daily completion bonuses, schedule-aware overall streak, persisted unlock dates, broader achievement/challenge catalog, and lightweight celebrations/haptics. |
 | 4. Habit and task enhancements | Partial | Habit categories/difficulty and schedule-aware individual analytics; task text/priority filters; recurrence keeps local wall time across DST. | Kanban, templates, notes/duration, category filters, full habit calendar/heatmap, reminders/reflections, richer project detail and task links. |
@@ -16,6 +16,10 @@ Updated 2026-11-01
 | 7. QA and release prep | Checks and docs in place; not release-ready | TypeScript checks, API unit tests, Expo public-config validation, migration instructions, CI Expo validation step, security/ownership review of new routes. | No MongoDB-backed integration or mobile device tests exist yet. The root checked-in Android project has an application ID mismatch and debug release signing; reconcile it before using that project. Configure and verify store signing credentials. |
 
 ## Validation run
+
+Milestone 1 validation on 2026-11-01: `npm run typecheck`, `npm run test:api` (11 passed), and `npm run validate:expo` all passed. The new shell and navigation compile; no device-level visual review has been performed yet.
+
+Milestone 2 validation on 2026-11-01: `npm run typecheck`, `npm run test:api` (11 passed), `npm run validate:expo`, and Expo web export (860 modules) all passed. No phone/tablet/desktop screenshot review was available in this pass.
 
 - `npm run typecheck`
 - `npm run test:api`

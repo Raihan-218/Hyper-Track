@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type TextInputProps, type ViewStyle } from "react-native";
-import { useAppTheme } from "../theme/theme";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View, type PressableProps, type StyleProp, type TextInputProps, type ViewStyle } from "react-native";
+import { radii, spacing, useAppTheme } from "../theme/theme";
 
 export function AppText({ children, muted = false, size = 15, weight = "regular", style }: { children: ReactNode; muted?: boolean; size?: number; weight?: "regular" | "medium" | "semibold" | "bold"; style?: object }) {
   const { colors } = useAppTheme();
@@ -8,7 +8,7 @@ export function AppText({ children, muted = false, size = 15, weight = "regular"
   return <Text style={[{ color: muted ? colors.textMuted : colors.text, fontSize: size, fontWeight, lineHeight: Math.round(size * 1.45) }, style]}>{children}</Text>;
 }
 
-export function AppCard({ children, style, padded = true }: { children: ReactNode; style?: ViewStyle; padded?: boolean }) {
+export function AppCard({ children, style, padded = true }: { children: ReactNode; style?: StyleProp<ViewStyle>; padded?: boolean }) {
   const { colors } = useAppTheme();
   return <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: colors.shadow }, padded && styles.cardPadded, style]}>{children}</View>;
 }
@@ -36,7 +36,7 @@ export function AppField({ label, style, ...props }: TextInputProps & { label?: 
 
 export function SectionTitle({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) {
   const { colors } = useAppTheme();
-  return <View style={styles.sectionTitleRow}><AppText size={18} weight="bold">{title}</AppText>{action ? <Pressable accessibilityRole="button" onPress={onAction}><Text style={{ color: colors.primary, fontSize: 13, fontWeight: "600" }}>{action}</Text></Pressable> : null}</View>;
+  return <View style={styles.sectionTitleRow}><AppText size={18} weight="bold">{title}</AppText>{action ? <Pressable accessibilityRole="button" onPress={onAction} style={styles.sectionAction}><Text style={{ color: colors.primary, fontSize: 13, fontWeight: "600" }}>{action}</Text></Pressable> : null}</View>;
 }
 
 export function ProgressBar({ value, color }: { value: number; color?: string }) {
@@ -61,15 +61,16 @@ export function EmptyState({ title, detail }: { title: string; detail?: string }
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: 20, shadowOpacity: 0.06, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
-  cardPadded: { padding: 16 },
-  button: { minHeight: 46, paddingHorizontal: 16, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  card: { borderWidth: 1, borderRadius: radii.lg, shadowOpacity: 0.06, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
+  cardPadded: { padding: spacing.lg },
+  button: { minHeight: 46, paddingHorizontal: spacing.lg, borderRadius: radii.md, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   buttonText: { fontSize: 14, fontWeight: "700" },
   fieldWrap: { gap: 6 },
-  input: { minHeight: 48, borderWidth: 1, borderRadius: 13, paddingHorizontal: 14, paddingVertical: 11, fontSize: 15 },
+  input: { minHeight: 48, borderWidth: 1, borderRadius: radii.md, paddingHorizontal: 14, paddingVertical: 11, fontSize: 15 },
   sectionTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 11 },
+  sectionAction: { minHeight: 44, justifyContent: "center", paddingLeft: 8 },
   progressTrack: { height: 8, borderRadius: 8, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 8 },
-  pill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
-  empty: { padding: 16, borderRadius: 16, gap: 3 }
+  pill: { borderWidth: 1, borderRadius: radii.pill, paddingHorizontal: 11, paddingVertical: 7 },
+  empty: { padding: spacing.lg, borderRadius: radii.lg, gap: 3 }
 });
