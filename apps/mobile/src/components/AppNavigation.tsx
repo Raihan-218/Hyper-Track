@@ -2,22 +2,27 @@ import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-na
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { radii, spacing, useAppTheme } from "../theme/theme";
 
-export type AppDestination = "overview" | "tasks" | "calendar" | "habits" | "profile";
-const destinations: Array<{ id: AppDestination; label: string; glyph: string }> = [
-  { id: "overview", label: "Home", glyph: "⌂" },
-  { id: "tasks", label: "Tasks", glyph: "☷" },
-  { id: "calendar", label: "Calendar", glyph: "▦" },
-  { id: "habits", label: "Habits", glyph: "↗" },
-  { id: "profile", label: "More", glyph: "•••" },
-];
+export type AppDestination = "overview" | "tasks" | "projects" | "calendar" | "habits" | "goals" | "profile";
+const destinations: Record<AppDestination, { id: AppDestination; label: string; glyph: string }> = {
+  overview: { id: "overview", label: "Home", glyph: "⌂" },
+  tasks: { id: "tasks", label: "Tasks", glyph: "☷" },
+  projects: { id: "projects", label: "Projects", glyph: "▧" },
+  calendar: { id: "calendar", label: "Calendar", glyph: "▦" },
+  habits: { id: "habits", label: "Habits", glyph: "↗" },
+  goals: { id: "goals", label: "Goals", glyph: "◎" },
+  profile: { id: "profile", label: "More", glyph: "•••" },
+};
+const workspace = [destinations.overview, destinations.tasks, destinations.projects, destinations.calendar];
+const tracking = [destinations.habits, destinations.goals];
+const mobileDestinations = [destinations.overview, destinations.tasks, destinations.calendar, destinations.habits, destinations.profile];
 
 export function AppNavigation({ active, onSelect, name, email }: { active: AppDestination; onSelect: (destination: AppDestination) => void; name: string; email: string }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
   const wide = width >= 960;
-  const item = (destination: typeof destinations[number], compact = false) => {
-    const selected = active === destination.id;
+  const item = (destination: (typeof destinations)[AppDestination], compact = false) => {
+    const selected = active === destination.id || compact && destination.id === "profile" && (active === "projects" || active === "goals");
     return <Pressable key={destination.id} accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={destination.label}
       onPress={() => onSelect(destination.id)} style={({ pressed }) => [compact ? styles.mobileItem : styles.sideItem, { backgroundColor: selected ? colors.primarySoft : "transparent", opacity: pressed ? 0.72 : 1 }]}>
       <Text style={[styles.glyph, { color: selected ? colors.primary : colors.textMuted }]}>{destination.glyph}</Text>
@@ -26,11 +31,12 @@ export function AppNavigation({ active, onSelect, name, email }: { active: AppDe
   };
   if (wide) return <View style={[styles.sidebar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
     <View style={styles.brand}><View style={[styles.logo, { backgroundColor: colors.primary }]}><Text style={[styles.logoText, { color: colors.onPrimary }]}>H</Text></View><View><Text style={[styles.brandTitle, { color: colors.text }]}>Hyper Track</Text><Text style={[styles.brandCaption, { color: colors.textFaint }]}>MAKE EVERY DAY COUNT</Text></View></View>
-    <Text style={[styles.groupLabel, { color: colors.textFaint }]}>WORKSPACE</Text>{destinations.slice(0, 4).map((entry) => item(entry))}
-    <Text style={[styles.groupLabel, { color: colors.textFaint, marginTop: spacing.xl }]}>PERSONAL</Text>{item(destinations[4])}
+    <Text style={[styles.groupLabel, { color: colors.textFaint }]}>WORKSPACE</Text>{workspace.map((entry) => item(entry))}
+    <Text style={[styles.groupLabel, { color: colors.textFaint, marginTop: spacing.xl }]}>TRACK</Text>{tracking.map((entry) => item(entry))}
+    <Text style={[styles.groupLabel, { color: colors.textFaint, marginTop: spacing.xl }]}>PERSONAL</Text>{item(destinations.profile)}
     <View style={[styles.account, { borderColor: colors.border }]}><View style={[styles.avatar, { backgroundColor: colors.primarySoft }]}><Text style={[styles.avatarText, { color: colors.primary }]}>{name.trim().charAt(0).toUpperCase() || "U"}</Text></View><View style={styles.accountCopy}><Text numberOfLines={1} style={[styles.accountName, { color: colors.text }]}>{name}</Text><Text numberOfLines={1} style={[styles.accountEmail, { color: colors.textMuted }]}>{email}</Text></View></View>
   </View>;
-  return <View style={[styles.mobileNav, { backgroundColor: colors.surface, borderColor: colors.border, paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>{destinations.map((entry) => item(entry, true))}</View>;
+  return <View style={[styles.mobileNav, { backgroundColor: colors.surface, borderColor: colors.border, paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>{mobileDestinations.map((entry) => item(entry, true))}</View>;
 }
 
 const styles = StyleSheet.create({

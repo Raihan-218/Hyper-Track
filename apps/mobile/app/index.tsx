@@ -9,19 +9,23 @@ import { ProgressBar } from "../src/components/ui";
 import type { AppDestination } from "../src/components/AppNavigation";
 import { AppShell } from "../src/components/AppShell";
 import { Dashboard } from "../src/components/Dashboard";
+import { TaskManagementScreen, type TaskDraft, type TaskEditorKey, type TaskRecord } from "../src/components/TaskManagementScreen";
+import { ProjectsScreen } from "../src/components/ProjectsScreen";
+import { HabitsScreen, type HabitDraft } from "../src/components/HabitsScreen";
+import { GoalsScreen } from "../src/components/GoalsScreen";
+import { CalendarScreen } from "../src/components/CalendarScreen";
 
 type User = AuthUserDTO;
 type Task = Omit<TaskDTO, "project" | "parentTask"> & {
   project?: { _id: string; name: string } | null;
   parentTask?: { _id: string; title: string } | null;
+  archivedAt?: string | null;
 };
 type Habit = HabitDTO;
 type Goal = GoalDTO;
 type Project = ProjectDTO;
 type AuthResponse = { user: User; token: string; refreshToken: string };
 type WeeklySummary = { timezone: string; days: DailyProgressDTO[]; totals: { tasksCompleted: number; habitCompletions: number } };
-type CalendarDay = { plannedTasks: number; completedTasks: number; completedHabits: number; scheduledHabits: number };
-type CalendarDetail = { date: string; isFuture: boolean; plannedTasks: Array<{ title: string; status: string; priority: string }>; completedTasks: Array<{ title: string; reversedAt?: string | null }>; scheduledHabits: Array<{ _id: string; name: string }>; completedHabits: Array<{ habit: string; name: string; reversedAt?: string | null }>; reversedHabitCompletions: Array<{ name: string }>; habitCompletionPercent: number | null; productivityScore: number | null; xpEarned: number | null };
 type FocusDTO = { _id: string; startedAt: string; plannedMinutes: number; status: "active" | "completed" | "cancelled" };
 type GameSummary = { totalXp: number; level: number; levelName: string; currentLevelXp: number; nextLevelXp: number; progress: number; currentStreak: number; longestStreak: number; achievements: Array<{ id: string; name: string; description: string; unlocked: boolean }>; challenges: Array<{ title: string; description: string; progress: number; target: number; completed: boolean }>; recentTransactions?: Array<{ localDate: string; amount: number }> };
 type TaskPage = { tasks: Task[]; total: number; limit: number; page: number };
@@ -106,11 +110,8 @@ export default function HomeScreen() {
   const [editingTask, setEditingTask] = useState<string | null>(null);
   const [editingHabit, setEditingHabit] = useState<string | null>(null);
   const [tab, setTab] = useState<AppDestination>("overview");
-  const [profileSection, setProfileSection] = useState<"progress" | "projects" | "goals" | "settings">("settings");
+  const [profileSection, setProfileSection] = useState<"progress" | "settings">("settings");
   const [selectedDate, setSelectedDate] = useState(today());
-  const [calendarMode, setCalendarMode] = useState<"month" | "week" | "day">("month");
-  const [calendarDays, setCalendarDays] = useState<Record<string, CalendarDay>>({});
-  const [calendarDetail, setCalendarDetail] = useState<CalendarDetail | null>(null);
   const [focusSession, setFocusSession] = useState<FocusDTO | null>(null);
   const [gameSummary, setGameSummary] = useState<GameSummary | null>(null);
   const [analyticsRange, setAnalyticsRange] = useState<"day" | "week" | "month">("week");
@@ -142,32 +143,43 @@ export default function HomeScreen() {
     setIsOffline(isApiOffline());
   }
 
-  async function loadCalendar(date: string) {
-    setSelectedDate(date);
-    const [year, month] = date.split("-").map(Number);
-    const from = `${year}-${String(month).padStart(2, "0")}-01`;
-    const toDate = new Date(Date.UTC(year, month, 0));
-    const to = toDate.toISOString().slice(0, 10);
-    const [monthData, detail] = await Promise.all([
-      api<{ days: Record<string, CalendarDay> }>(`/calendar?from=${from}&to=${to}`),
-      api<CalendarDetail>(`/calendar/day/${date}`)
-    ]);
-    setCalendarDays(monthData.days); setCalendarDetail(detail);
-  }
-
-  function shiftCalendar(direction: -1 | 1) {
-    const date = new Date(`${selectedDate}T12:00:00Z`);
-    if (calendarMode === "month") { date.setUTCDate(1); date.setUTCMonth(date.getUTCMonth() + direction); }
-    else date.setUTCDate(date.getUTCDate() + direction * (calendarMode === "week" ? 7 : 1));
-    void loadCalendar(date.toISOString().slice(0, 10));
-  }
-
   function resetTaskForm() {
     setNewTask(""); setEditingTask(null); setTaskDueDate(""); setTaskPlannedDate(""); setTaskReminderAt(""); setTaskProjectId(null); setTaskParentId(null); setTaskPriority("medium"); setTaskRecurrence("none");
   }
 
   function resetHabitForm() {
     setNewHabit(""); setEditingHabit(null); setHabitFrequency("daily"); setHabitTarget(3); setHabitDays([]); setHabitCategory("Personal"); setHabitDifficulty("medium");
+  }
+
+  function updateTaskDraft(key: TaskEditorKey, value: TaskDraft[TaskEditorKey]) {
+    if (key === "title") setNewTask(value as string);
+    else if (key === "priority") setTaskPriority(value as TaskDraft["priority"]);
+    else if (key === "dueDate") setTaskDueDate(value as string);
+    else if (key === "plannedDate") setTaskPlannedDate(value as string);
+    else if (key === "reminderAt") setTaskReminderAt(value as string);
+    else if (key === "recurrence") setTaskRecurrence(value as TaskDraft["recurrence"]);
+    else if (key === "projectId") setTaskProjectId(value as string | null);
+    else if (key === "parentTaskId") setTaskParentId(value as string | null);
+  }
+
+  function updateHabitDraft(key: keyof HabitDraft, value: HabitDraft[keyof HabitDraft]) {
+    if (key === "name") setNewHabit(value as string);
+    else if (key === "category") setHabitCategory(value as string);
+    else if (key === "frequency") setHabitFrequency(value as HabitDraft["frequency"]);
+    else if (key === "target") setHabitTarget(value as number);
+    else if (key === "days") setHabitDays(value as number[]);
+    else if (key === "difficulty") setHabitDifficulty(value as HabitDraft["difficulty"]);
+  }
+
+  function beginEditTask(task: Task) {
+    setEditingTask(task._id); setNewTask(task.title); setTaskPriority(task.priority); setTaskPlannedDate(task.plannedDate ?? "");
+    setTaskDueDate(task.dueDate ? localDateOf(task.dueDate, user?.timezone) : ""); setTaskReminderAt(toLocalDateTimeInput(task.reminderAt, user?.timezone));
+    setTaskRecurrence(task.recurrence ?? "none"); setTaskProjectId(task.project?._id ?? null); setTaskParentId(task.parentTask?._id ?? null);
+  }
+
+  function beginEditHabit(habit: Habit) {
+    setEditingHabit(habit._id); setNewHabit(habit.name); setHabitFrequency(habit.frequency); setHabitTarget(habit.targetPerWeek);
+    setHabitDays(habit.daysOfWeek ?? []); setHabitCategory(habit.category ?? "Personal"); setHabitDifficulty(habit.difficulty ?? "medium");
   }
 
   useEffect(() => {
@@ -178,6 +190,7 @@ export default function HomeScreen() {
         if (token) {
           const result = await api<{ user: User }>("/auth/me");
           setUser(result.user);
+          setSelectedDate(today(result.user.timezone));
           setProfileName(result.user.name); setProfileTimezone(result.user.timezone ?? "UTC");
           await loadData();
         }
@@ -186,7 +199,6 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  useEffect(() => { if (user && tab === "calendar") void loadCalendar(selectedDate).catch((e) => showError(e)); }, [user, tab]);
   useEffect(() => {
     if (!user || tab !== "profile" || profileSection !== "progress") return;
     const end = today(user.timezone); const date = new Date(`${end}T12:00:00Z`);
@@ -308,6 +320,26 @@ export default function HomeScreen() {
     catch (e) { showError(e); }
   }
 
+  async function updateProjectStatus(project: Project, status: "active" | "completed") {
+    try { await api(`/projects/${project._id}`, { method: "PATCH", body: JSON.stringify({ status }) }); await loadData(); }
+    catch (e) { showError(e); }
+  }
+
+  async function archiveProject(project: Project) {
+    try { await api(`/projects/${project._id}`, { method: "DELETE" }); await loadData(); }
+    catch (e) { showError(e); }
+  }
+
+  async function toggleGoalStatus(goal: Goal) {
+    try { await api(`/goals/${goal._id}`, { method: "PATCH", body: JSON.stringify({ status: goal.status === "completed" ? "active" : "completed" }) }); await loadData(); }
+    catch (e) { showError(e); }
+  }
+
+  async function archiveGoal(goal: Goal) {
+    try { await api(`/goals/${goal._id}`, { method: "DELETE" }); await loadData(); }
+    catch (e) { showError(e); }
+  }
+
   async function addMilestone(goalId: string) {
     if (!newMilestone.trim()) return;
     try { await api(`/goals/${goalId}/milestones`, { method: "POST", body: JSON.stringify({ title: newMilestone.trim() }) }); setNewMilestone(""); setMilestoneGoalId(null); await loadData(); }
@@ -373,9 +405,11 @@ export default function HomeScreen() {
   const greetingHour = Number(dateParts(new Date(), user?.timezone).hour);
   const timeGreeting = greetingHour < 12 ? "Good morning" : greetingHour < 17 ? "Good afternoon" : "Good evening";
 
+  const taskDraft: TaskDraft = { title: newTask, priority: taskPriority, dueDate: taskDueDate, plannedDate: taskPlannedDate, reminderAt: taskReminderAt, recurrence: taskRecurrence, projectId: taskProjectId, parentTaskId: taskParentId };
+  const habitDraft: HabitDraft = { name: newHabit, category: habitCategory, frequency: habitFrequency, target: habitTarget, days: habitDays, difficulty: habitDifficulty };
   const selectDestination = (destination: AppDestination) => { setTab(destination); if (destination === "profile") setProfileSection("settings"); resetTaskForm(); resetHabitForm(); setNewGoal(""); setGoalTargetDate(""); setEditingGoalId(null); };
   return <AppShell active={tab} onSelect={selectDestination} name={user.name} email={user.email}>
-    <ScrollView contentContainerStyle={tab === "overview" ? { flexGrow: 1 } : styles.page} keyboardShouldPersistTaps="handled">
+    <ScrollView contentContainerStyle={tab === "overview" || tab === "tasks" || tab === "projects" || tab === "habits" || tab === "goals" ? { flexGrow: 1 } : styles.page} keyboardShouldPersistTaps="handled">
       {tab === "overview" ? <Dashboard
         name={user.name}
         today={localToday}
@@ -396,36 +430,19 @@ export default function HomeScreen() {
         onFocusMinutes={setFocusMinutes}
         onStartFocus={() => void startFocus()}
         onFinishFocus={(status) => void finishFocus(status)}
-      /> : <>
+      /> : tab === "tasks" ? <TaskManagementScreen tasks={tasks} projects={projects} timezone={user.timezone || "UTC"} today={localToday} draft={taskDraft} editingId={editingTask} error={error} onDraftChange={updateTaskDraft} onSubmit={() => void addTask()} onReset={resetTaskForm} onEdit={(task) => beginEditTask(task as Task)} onToggle={(task) => void toggleTask(task as Task)} onArchive={(task) => void deleteTask(task as Task)} />
+        : tab === "projects" ? <ProjectsScreen projects={projects} tasks={tasks} timezone={user.timezone || "UTC"} today={localToday} editingId={editingProjectId} name={newProject} onNameChange={setNewProject} onSave={() => void createProject()} onCancelEdit={() => { setEditingProjectId(null); setNewProject(""); }} onEdit={(project) => { setEditingProjectId(project._id); setNewProject(project.name); }} onStatusChange={(project, status) => void updateProjectStatus(project, status)} onArchive={(project) => void archiveProject(project)} error={error} />
+          : tab === "habits" ? <HabitsScreen habits={habits} today={localToday} timezone={user.timezone || "UTC"} draft={habitDraft} editingId={editingHabit} error={error} onDraftChange={updateHabitDraft} onSave={() => void addHabit()} onCancelEdit={resetHabitForm} onToggle={(habit) => void toggleHabit(habit as Habit)} onArchive={(habit) => void deleteHabit(habit as Habit)} onEdit={(habit) => beginEditHabit(habit as Habit)} />
+            : tab === "goals" ? <GoalsScreen goals={goals} timezone={user.timezone || "UTC"} title={newGoal} targetDate={goalTargetDate} editingId={editingGoalId} newMilestone={newMilestone} milestoneGoalId={milestoneGoalId} error={error} onTitleChange={setNewGoal} onTargetDateChange={setGoalTargetDate} onMilestoneChange={setNewMilestone} onSave={() => void createGoal()} onCancelEdit={() => { setEditingGoalId(null); setNewGoal(""); setGoalTargetDate(""); }} onEdit={(goal) => { setEditingGoalId(goal._id); setNewGoal(goal.title); setGoalTargetDate(goal.targetDate ? localDateOf(goal.targetDate, user?.timezone) : ""); }} onToggleGoal={(goal) => void toggleGoalStatus(goal as Goal)} onArchive={(goal) => void archiveGoal(goal as Goal)} onAddMilestone={(goalId) => void addMilestone(goalId)} onSelectMilestoneGoal={setMilestoneGoalId} onToggleMilestone={(goal, milestone) => void toggleMilestone(goal as Goal, milestone)} /> : <>
       <View style={styles.topRow}>
         <View><Text style={styles.brandSmall}>HYPER TRACK</Text><Text style={[styles.greeting, { color: colors.text }]}>{timeGreeting}, {user.name.split(" ")[0]} 👋</Text><Text style={styles.statLabel}>{new Date(`${localToday}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })}</Text></View>
         <Pressable onPress={logout} style={styles.logout}><Text style={styles.logoutText}>Log out</Text></Pressable>
       </View>
       {isOffline && <Text style={styles.offlineNotice}>Offline · new tasks and habits will sync when you reconnect. Other changes need a connection.</Text>}
-      {tab === "calendar" && <View style={styles.section}>
-        <View style={styles.sectionHeading}><Pressable onPress={() => shiftCalendar(-1)}><Text style={[styles.sectionTitle, { color: colors.text }]}>‹</Text></Pressable><Text style={[styles.sectionTitle, { color: colors.text }]}>{new Date(`${selectedDate.slice(0, 7)}-15T12:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" })}</Text><Pressable onPress={() => shiftCalendar(1)}><Text style={[styles.sectionTitle, { color: colors.text }]}>›</Text></Pressable></View>
-        <View style={styles.optionRow}>{(["month", "week", "day"] as const).map((value) => <Pressable key={value} onPress={() => setCalendarMode(value)} style={[styles.optionPill, calendarMode === value && styles.optionPillActive]}><Text style={[styles.optionPillText, calendarMode === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}<Pressable onPress={() => void loadCalendar(today(user?.timezone))} style={styles.optionPill}><Text style={styles.optionPillText}>Today</Text></Pressable></View>
-        {calendarMode === "month" && <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 12 }}>{["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <Text key={`${d}${i}`} style={[styles.dayLabel, { width: "14.28%", textAlign: "center", paddingVertical: 8 }]}>{d}</Text>)}{Array.from({ length: new Date(`${selectedDate.slice(0, 7)}-01T00:00:00Z`).getUTCDay() }, (_, i) => <View key={`blank${i}`} style={{ width: "14.28%", height: 46 }} />)}{Array.from({ length: new Date(Date.UTC(Number(selectedDate.slice(0, 4)), Number(selectedDate.slice(5, 7)), 0)).getUTCDate() }, (_, i) => { const day = i + 1; const date = `${selectedDate.slice(0, 7)}-${String(day).padStart(2, "0")}`; const stats = calendarDays[date]; const selected = selectedDate === date; return <Pressable key={date} onPress={() => void loadCalendar(date)} style={{ width: "14.28%", height: 46, alignItems: "center", justifyContent: "center", backgroundColor: selected ? colors.primarySoft : "transparent", borderRadius: 12 }}><Text style={{ color: selected ? colors.primary : colors.text, fontWeight: selected ? "700" : "500" }}>{day}</Text><Text accessibilityLabel={stats ? `${stats.completedTasks} tasks and ${stats.completedHabits} habits completed` : "No recorded activity"} style={{ fontSize: 8, color: stats?.completedTasks || stats?.completedHabits ? colors.success : colors.textFaint }}>{stats?.completedTasks || stats?.completedHabits ? "●" : "·"}</Text></Pressable>; })}</View>}
-        {calendarMode !== "month" && <View style={styles.optionRow}>{Array.from({ length: calendarMode === "week" ? 7 : 1 }, (_, index) => { const base = new Date(`${selectedDate}T12:00:00Z`); if (calendarMode === "week") base.setUTCDate(base.getUTCDate() - base.getUTCDay() + index); const date = base.toISOString().slice(0, 10); return <Pressable key={date} onPress={() => void loadCalendar(date)} style={[styles.optionPill, date === selectedDate && styles.optionPillActive]}><Text style={[styles.optionPillText, date === selectedDate && styles.optionPillTextActive]}>{base.toLocaleDateString(undefined, { weekday: "short", day: "numeric", timeZone: "UTC" })}</Text></Pressable>; })}</View>}
-        {calendarDetail?.isFuture && <View style={styles.addRow}><TextInput value={newTask} onChangeText={setNewTask} placeholder={`Plan a task for ${selectedDate}`} placeholderTextColor="#727B95" style={[styles.input, styles.addInput]} onSubmitEditing={addTask} returnKeyType="done" /><Pressable onPress={addTask} style={styles.addButton}><Text style={styles.addButtonText}>+</Text></Pressable></View>}        <View style={styles.section}><Text style={[styles.sectionTitle, { color: colors.text }]}>{selectedDate} · {calendarDetail?.isFuture ? "Plan ahead" : "Your day"}</Text>{calendarDetail && <><Text style={[styles.progressTotals, { color: colors.textMuted }]}>{calendarDetail.isFuture ? "Future dates have no completion score." : `${calendarDetail.completedTasks.length} completed tasks · ${calendarDetail.habitCompletionPercent ?? 0}% scheduled habits · ${calendarDetail.xpEarned ?? 0} XP`}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>PLANNED TASKS</Text>{calendarDetail.plannedTasks.length ? calendarDetail.plannedTasks.map((task, i) => <View key={`${task.title}${i}`} style={styles.listItem}><Text style={[styles.itemTitle, { color: colors.text }]}>○  {task.title}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>{task.priority.toUpperCase()}</Text></View>) : <Text style={styles.empty}>No tasks planned for this date.</Text>}<Text style={[styles.itemMeta, { marginTop: 16 }]}>COMPLETED ON THIS DATE</Text>{calendarDetail.completedTasks.length ? calendarDetail.completedTasks.map((task, i) => <Text key={`${task.title}${i}`} style={styles.itemTitle}>{task.reversedAt ? "↶" : "✓"}  {task.title}{task.reversedAt ? " · later undone" : ""}</Text>) : <Text style={styles.empty}>No recorded task completions.</Text>}<Text style={[styles.itemMeta, { marginTop: 16 }]}>SCHEDULED HABITS</Text>{calendarDetail.scheduledHabits.length ? calendarDetail.scheduledHabits.map((habit) => <Text key={habit._id} style={styles.itemTitle}>{calendarDetail.completedHabits.some((entry) => entry.habit === habit._id && !entry.reversedAt) ? "✓" : "○"}  {habit.name}</Text>) : <Text style={styles.empty}>No habits scheduled.</Text>}</>}</View>
-      </View>}
-      {tab === "tasks" && <View style={styles.section}>
-        <View style={styles.sectionHeading}><Text style={[styles.sectionTitle, { color: colors.text }]}>Your tasks</Text><Pressable onPress={() => setTab("overview")}><Text style={[styles.link, { color: colors.primary }]}>Home · {tasks.filter((t) => t.status !== "done").length} left</Text></Pressable></View>
-        {tab === "tasks" && <><TextInput value={taskSearch} onChangeText={setTaskSearch} placeholder="Search tasks" placeholderTextColor="#727B95" style={[styles.input, styles.optionInput]} /><View style={styles.optionRow}>{(["all", "high", "medium", "low"] as const).map((value) => <Pressable key={value} onPress={() => setTaskPriorityFilter(value)} style={[styles.optionPill, taskPriorityFilter === value && styles.optionPillActive]}><Text style={[styles.optionPillText, taskPriorityFilter === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View></>}        <View style={styles.addRow}><TextInput value={newTask} onChangeText={setNewTask} placeholder={editingTask ? "Edit task title…" : "Add a task…"} placeholderTextColor="#727B95" style={[styles.input, styles.addInput]} onSubmitEditing={addTask} returnKeyType="done" /><Pressable onPress={addTask} style={styles.addButton}><Text style={styles.addButtonText}>{editingTask ? "✓" : "+"}</Text></Pressable>{!!editingTask && <Pressable onPress={resetTaskForm} style={styles.cancelButton}><Text style={styles.cancelText}>×</Text></Pressable>}</View>
-        {(tab === "tasks" || !!editingTask) && <View style={styles.formOptions}><View style={styles.optionRow}><Text style={styles.optionLabel}>Priority</Text>{(["low", "medium", "high"] as const).map((value) => <Pressable key={value} onPress={() => setTaskPriority(value)} style={[styles.optionPill, taskPriority === value && styles.optionPillActive]}><Text style={[styles.optionPillText, taskPriority === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View><TextInput value={taskPlannedDate} onChangeText={setTaskPlannedDate} placeholder="Plan date (YYYY-MM-DD, optional)" placeholderTextColor="#727B95" style={[styles.input, styles.optionInput]} autoCapitalize="none" /><TextInput value={taskDueDate} onChangeText={setTaskDueDate} placeholder="Due date (YYYY-MM-DD, optional)" placeholderTextColor="#727B95" style={[styles.input, styles.optionInput]} autoCapitalize="none" /><TextInput value={taskReminderAt} onChangeText={setTaskReminderAt} placeholder="Reminder (YYYY-MM-DD HH:mm, optional)" placeholderTextColor="#727B95" style={[styles.input, styles.optionInput]} autoCapitalize="none" /><View style={styles.optionRow}><Text style={styles.optionLabel}>Repeat</Text>{(["none", "daily", "weekly"] as const).map((value) => <Pressable key={value} onPress={() => setTaskRecurrence(value)} style={[styles.optionPill, taskRecurrence === value && styles.optionPillActive]}><Text style={[styles.optionPillText, taskRecurrence === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View>{projects.length > 0 && <View style={styles.optionRow}><Text style={styles.optionLabel}>Project</Text><Pressable onPress={() => setTaskProjectId(null)} style={[styles.optionPill, !taskProjectId && styles.optionPillActive]}><Text style={[styles.optionPillText, !taskProjectId && styles.optionPillTextActive]}>None</Text></Pressable>{projects.map((project) => <Pressable key={project._id} onPress={() => setTaskProjectId(project._id)} style={[styles.optionPill, taskProjectId === project._id && styles.optionPillActive]}><Text style={[styles.optionPillText, taskProjectId === project._id && styles.optionPillTextActive]}>{project.name}</Text></Pressable>)}</View>}{tasks.filter((task) => !task.parentTask && task._id !== editingTask).length > 0 && <View style={styles.optionRow}><Text style={styles.optionLabel}>Subtask of</Text><Pressable onPress={() => setTaskParentId(null)} style={[styles.optionPill, !taskParentId && styles.optionPillActive]}><Text style={[styles.optionPillText, !taskParentId && styles.optionPillTextActive]}>None</Text></Pressable>{tasks.filter((task) => !task.parentTask && task._id !== editingTask).map((task) => <Pressable key={task._id} onPress={() => setTaskParentId(task._id)} style={[styles.optionPill, taskParentId === task._id && styles.optionPillActive]}><Text style={[styles.optionPillText, taskParentId === task._id && styles.optionPillTextActive]}>{task.title}</Text></Pressable>)}</View>}</View>}
-        {filteredTasks.length === 0 ? <Text style={styles.empty}>Your task list is a clean slate. Add one small win.</Text> : filteredTasks.map((task) => <View key={task._id} style={styles.listItem}><Pressable onPress={() => toggleTask(task)} style={[styles.check, task.status === "done" && styles.checked]}>{task.status === "done" && <Text style={styles.checkMark}>✓</Text>}</Pressable><Pressable style={styles.itemTextWrap} onPress={() => { setEditingTask(task._id); setNewTask(task.title); setTaskPriority(task.priority); setTaskPlannedDate(task.plannedDate ?? ""); setTaskDueDate(task.dueDate ? localDateOf(task.dueDate, user?.timezone) : ""); setTaskReminderAt(toLocalDateTimeInput(task.reminderAt, user?.timezone)); setTaskRecurrence(task.recurrence ?? "none"); setTaskProjectId(task.project?._id ?? null); setTaskParentId(task.parentTask?._id ?? null); }}><Text style={[styles.itemTitle, { color: colors.text }, task.status === "done" && styles.struck]}>{task.parentTask ? `↳ ${task.title}` : task.title}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>{task.priority.toUpperCase()} PRIORITY{task.dueDate ? ` · DUE ${localDateOf(task.dueDate, user?.timezone)}` : ""}{task.project?.name ? ` · ${task.project.name}` : ""} · TAP TO EDIT</Text></Pressable><Pressable onPress={() => deleteTask(task)} accessibilityLabel={`Archive ${task.title}`}><Text style={styles.deleteText}>×</Text></Pressable></View>)}
-      </View>}
-      {tab === "habits" && <View style={styles.section}>
-        <View style={styles.sectionHeading}><Text style={[styles.sectionTitle, { color: colors.text }]}>Daily habits</Text><Text style={[styles.sectionCount, { color: colors.textMuted }]}>{completedHabits} completed</Text></View>
-        <View style={styles.addRow}><TextInput value={newHabit} onChangeText={setNewHabit} placeholder={editingHabit ? "Edit habit name…" : "Add a daily habit…"} placeholderTextColor="#727B95" style={[styles.input, styles.addInput]} onSubmitEditing={addHabit} returnKeyType="done" /><Pressable onPress={addHabit} style={styles.addButton}><Text style={styles.addButtonText}>{editingHabit ? "✓" : "+"}</Text></Pressable>{!!editingHabit && <Pressable onPress={resetHabitForm} style={styles.cancelButton}><Text style={styles.cancelText}>×</Text></Pressable>}</View>
-        {(tab === "habits" || !!editingHabit) && <View style={styles.formOptions}><TextInput value={habitCategory} onChangeText={setHabitCategory} placeholder="Category (Personal)" placeholderTextColor="#727B95" style={[styles.input, styles.optionInput]} /><View style={styles.optionRow}><Text style={styles.optionLabel}>Difficulty</Text>{(["easy", "medium", "hard"] as const).map((value) => <Pressable key={value} onPress={() => setHabitDifficulty(value)} style={[styles.optionPill, habitDifficulty === value && styles.optionPillActive]}><Text style={[styles.optionPillText, habitDifficulty === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View><View style={styles.optionRow}><Text style={styles.optionLabel}>Schedule</Text>{(["daily", "weekly"] as const).map((value) => <Pressable key={value} onPress={() => setHabitFrequency(value)} style={[styles.optionPill, habitFrequency === value && styles.optionPillActive]}><Text style={[styles.optionPillText, habitFrequency === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View>{habitFrequency === "weekly" && <><View style={styles.optionRow}><Text style={styles.optionLabel}>Times per week</Text><Pressable onPress={() => setHabitTarget(Math.max(1, habitTarget - 1))} style={styles.optionPill}><Text style={styles.optionPillText}>−</Text></Pressable><Text style={styles.targetNumber}>{habitTarget}</Text><Pressable onPress={() => setHabitTarget(Math.min(7, habitTarget + 1))} style={styles.optionPill}><Text style={styles.optionPillText}>+</Text></Pressable></View><View style={styles.optionRow}><Text style={styles.optionLabel}>Preferred days</Text>{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label, day) => <Pressable key={label} onPress={() => setHabitDays((existing) => { const next = existing.includes(day) ? existing.filter((item) => item !== day) : [...existing, day].sort(); if (next.length) setHabitTarget(next.length); return next; })} style={[styles.optionPill, habitDays.includes(day) && styles.optionPillActive]}><Text style={[styles.optionPillText, habitDays.includes(day) && styles.optionPillTextActive]}>{label}</Text></Pressable>)}</View></>}</View>}
-        {habits.length === 0 ? <Text style={styles.empty}>Habits compound over time. Start with just one.</Text> : habits.map((habit) => { const done = habit.completions.includes(today(user?.timezone)); return <View key={habit._id} style={styles.listItem}><Pressable onPress={() => toggleHabit(habit)} style={[styles.check, done && styles.checked]}>{done && <Text style={styles.checkMark}>✓</Text>}</Pressable><Pressable style={styles.itemTextWrap} onPress={() => { setEditingHabit(habit._id); setNewHabit(habit.name); setHabitFrequency(habit.frequency); setHabitTarget(habit.targetPerWeek); setHabitDays(habit.daysOfWeek ?? []); setHabitCategory(habit.category ?? "Personal"); setHabitDifficulty(habit.difficulty ?? "medium"); }}><Text style={[styles.itemTitle, { color: colors.text }]}>{habit.icon ?? "•"}  {habit.name}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>{(habit.category ?? "PERSONAL").toUpperCase()} · {(habit.difficulty ?? "medium").toUpperCase()} · {habit.frequency.toUpperCase()} HABIT{habit.frequency === "weekly" ? ` · ${habit.targetPerWeek}× / WEEK${habit.daysOfWeek?.length ? ` · ${habit.daysOfWeek.map((day) => ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][day]).join(" ")}` : ""}` : ""} · TAP TO EDIT</Text></Pressable><Pressable onPress={() => void showHabitAnalytics(habit)} accessibilityLabel={`View ${habit.name} analytics`}><Text style={[styles.link, { color: colors.primary }]}>Stats</Text></Pressable><Pressable onPress={() => deleteHabit(habit)} accessibilityLabel={`Archive ${habit.name}`}><Text style={styles.deleteText}>×</Text></Pressable></View>; })}
-      </View>}
-      {tab === "profile" && <View style={styles.section}><View style={styles.optionRow}>{(["progress", "projects", "goals", "settings"] as const).map((value) => <Pressable key={value} onPress={() => setProfileSection(value)} style={[styles.optionPill, profileSection === value && styles.optionPillActive]}><Text style={[styles.optionPillText, profileSection === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View></View>}
+      {tab === "calendar" && <CalendarScreen today={localToday} timezone={user.timezone || "UTC"} tasks={tasks} initialDate={selectedDate} onDateChange={setSelectedDate} onCreateTask={(date) => { resetTaskForm(); setTaskPlannedDate(date); setTab("tasks"); }} onEditTask={(task) => { setTab("tasks"); beginEditTask(task as Task); }} onToggleTask={(task) => toggleTask(task as Task)} onOpenProject={() => selectDestination("projects")} />}
+      {tab === "profile" && <View style={styles.section}><View style={styles.optionRow}>{(["progress", "settings"] as const).map((value) => <Pressable key={value} onPress={() => setProfileSection(value)} style={[styles.optionPill, profileSection === value && styles.optionPillActive]}><Text style={[styles.optionPillText, profileSection === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View><View style={[styles.optionRow, { marginTop: 10 }]}>{(["projects", "goals"] as const).map((destination) => <Pressable key={destination} accessibilityRole="button" onPress={() => selectDestination(destination)} style={styles.optionPill}><Text style={styles.optionPillText}>{destination}</Text></Pressable>)}</View></View>}
       {tab === "profile" && profileSection === "progress" && <View style={styles.section}><Text style={[styles.sectionTitle, { color: colors.text }]}>Insights</Text><View style={styles.optionRow}>{(["day", "week", "month"] as const).map((value) => <Pressable key={value} onPress={() => setAnalyticsRange(value)} style={[styles.optionPill, analyticsRange === value && styles.optionPillActive]}><Text style={[styles.optionPillText, analyticsRange === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View><Text style={[styles.progressTotals, { color: colors.textMuted }]}>{weekly?.totals.tasksCompleted ?? 0} tasks completed · {weekly?.totals.habitCompletions ?? 0} habit check-ins</Text>{weekly?.days.map((day) => { const intensity = Math.min(1, (day.tasksCompleted + day.habitsCompleted) / 6); const date = new Date(`${day.date}T12:00:00Z`); const label = analyticsRange === "day" ? "Today" : date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }); return <View key={day.date} style={styles.dayRow}><Text style={styles.dayLabel}>{label}</Text><View style={styles.barTrack}><View style={[styles.barFill, { width: `${Math.max(4, intensity * 100)}%` }]} /></View><Text style={styles.dayCount}>{day.tasksCompleted + day.habitsCompleted}</Text></View>; })}</View>}
       {tab === "profile" && profileSection === "progress" && gameSummary && <View style={styles.section}><Text style={[styles.sectionTitle, { color: colors.text }]}>Challenges & achievements</Text>{gameSummary.challenges.map((challenge) => <View key={challenge.title} style={styles.goalCard}><Text style={[styles.itemTitle, { color: colors.text }]}>{challenge.completed ? "✓  " : "○  "}{challenge.title}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>{challenge.description} · {challenge.progress}/{challenge.target}</Text><ProgressBar value={challenge.progress / challenge.target * 100} /></View>)}{gameSummary.achievements.map((achievement) => <View key={achievement.id} style={styles.milestoneRow}><Text style={styles.milestoneMark}>{achievement.unlocked ? "🏅" : "○"}</Text><View><Text style={[styles.itemTitle, { color: colors.text }]}>{achievement.name}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>{achievement.description}</Text></View></View>)}</View>}
-      {tab === "profile" && profileSection === "goals" && <View style={styles.section}><Text style={[styles.sectionTitle, { color: colors.text }]}>Goals</Text><View style={styles.addRow}><TextInput value={newGoal} onChangeText={setNewGoal} placeholder={editingGoalId ? "Edit goal title…" : "Add a meaningful goal…"} placeholderTextColor="#727B95" style={[styles.input, styles.addInput]} onSubmitEditing={createGoal} returnKeyType="done" /><Pressable onPress={createGoal} style={styles.addButton}><Text style={styles.addButtonText}>{editingGoalId ? "✓" : "+"}</Text></Pressable></View><TextInput value={goalTargetDate} onChangeText={setGoalTargetDate} placeholder="Target date (YYYY-MM-DD, optional)" placeholderTextColor="#727B95" style={[styles.input, styles.optionInput]} autoCapitalize="none" />{goals.length === 0 ? <Text style={styles.empty}>Keep this focused: choose one goal that matters this season.</Text> : goals.map((goal) => <View key={goal._id} style={styles.goalCard}><View style={styles.goalHeader}><Pressable onPress={() => { setEditingGoalId(goal._id); setNewGoal(goal.title); setGoalTargetDate(goal.targetDate ? localDateOf(goal.targetDate, user?.timezone) : ""); }}><Text style={[styles.itemTitle, { color: colors.text }]}>{goal.title}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>{goal.targetDate ? `TARGET ${localDateOf(goal.targetDate, user?.timezone)}` : "TAP TITLE TO EDIT"}</Text></Pressable><View style={styles.optionRow}><Pressable onPress={async () => { try { await api(`/goals/${goal._id}`, { method: "PATCH", body: JSON.stringify({ status: goal.status === "completed" ? "active" : "completed" }) }); await loadData(); } catch (e) { showError(e); } }}><Text style={styles.optionPillText}>{goal.status === "completed" ? "Reopen" : "Complete"}</Text></Pressable><Pressable onPress={async () => { try { await api(`/goals/${goal._id}`, { method: "DELETE" }); await loadData(); } catch (e) { showError(e); } }} accessibilityLabel={`Archive ${goal.title}`}><Text style={styles.deleteText}>×</Text></Pressable></View></View>{goal.milestones.map((milestone) => <Pressable key={milestone._id} onPress={() => toggleMilestone(goal, milestone)} style={styles.milestoneRow}><Text style={styles.milestoneMark}>{milestone.completedAt ? "✓" : "○"}</Text><Text style={[styles.itemTitle, { color: colors.text }, milestone.completedAt && styles.struck]}>{milestone.title}</Text></Pressable>)}{milestoneGoalId === goal._id ? <View style={styles.addRow}><TextInput value={newMilestone} onChangeText={setNewMilestone} placeholder="Milestone name" placeholderTextColor="#727B95" style={[styles.input, styles.addInput]} onSubmitEditing={() => addMilestone(goal._id)} /><Pressable onPress={() => addMilestone(goal._id)} style={styles.addButton}><Text style={styles.addButtonText}>+</Text></Pressable></View> : <Pressable onPress={() => setMilestoneGoalId(goal._id)} style={styles.addMilestone}><Text style={[styles.link, { color: colors.primary }]}>+ Add milestone</Text></Pressable>}</View>)}</View>}
-      {tab === "profile" && profileSection === "projects" && <View style={styles.section}><Text style={[styles.sectionTitle, { color: colors.text }]}>Projects</Text><View style={styles.addRow}><TextInput value={newProject} onChangeText={setNewProject} placeholder={editingProjectId ? "Edit project name…" : "Add a project…"} placeholderTextColor="#727B95" style={[styles.input, styles.addInput]} onSubmitEditing={createProject} returnKeyType="done" /><Pressable onPress={createProject} style={styles.addButton}><Text style={styles.addButtonText}>{editingProjectId ? "✓" : "+"}</Text></Pressable></View>{projects.length === 0 ? <Text style={styles.empty}>Group related tasks when you have a larger outcome to manage.</Text> : projects.map((project) => <View key={project._id} style={styles.listItem}><Pressable style={styles.itemTextWrap} onPress={() => { setEditingProjectId(project._id); setNewProject(project.name); }}><Text style={[styles.itemTitle, { color: colors.text }]}>{project.name}</Text><Text style={[styles.itemMeta, { color: colors.textMuted }]}>{tasks.filter((task) => task.project?._id === project._id).length} TASKS · TAP TO EDIT</Text></Pressable><Pressable onPress={async () => { try { await api(`/projects/${project._id}`, { method: "DELETE" }); await loadData(); } catch (e) { showError(e); } }} accessibilityLabel={`Archive ${project.name}`}><Text style={styles.deleteText}>×</Text></Pressable></View>)}</View>}
       {tab === "profile" && profileSection === "settings" && <View style={styles.section}><Text style={[styles.sectionTitle, { color: colors.text }]}>Profile & settings</Text><Text style={styles.optionLabel}>Appearance</Text><View style={styles.optionRow}>{(["system", "light", "dark"] as ThemeMode[]).map((value) => <Pressable key={value} onPress={() => setMode(value)} accessibilityState={{ selected: mode === value }} style={[styles.optionPill, mode === value && styles.optionPillActive]}><Text style={[styles.optionPillText, mode === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View><Text style={styles.optionLabel}>Name</Text><TextInput value={profileName} onChangeText={setProfileName} placeholder="Your name" placeholderTextColor="#727B95" style={styles.input} /><Text style={[styles.optionLabel, { marginTop: 16 }]}>Timezone (IANA name)</Text><TextInput value={profileTimezone} onChangeText={setProfileTimezone} placeholder="e.g. Asia/Kolkata" placeholderTextColor="#727B95" style={styles.input} autoCapitalize="none" /><Text style={[styles.settingsEmail, { color: colors.textMuted }]}>{user.email}</Text><Pressable onPress={saveProfile} style={styles.primary}><Text style={styles.primaryText}>Save profile</Text></Pressable></View>}
       {!!error && <Text style={styles.error}>{error}</Text>}
       <Text style={styles.footer}>ONE DAY AT A TIME · KEEP GOING</Text>

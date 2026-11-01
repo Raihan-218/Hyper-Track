@@ -14,9 +14,9 @@
     "validate:expo": "npm run validate:config -w @hyper-track/mobile"
   },
   "dependencies": {
-    "expo": "~58.0.20",
-    "expo-dev-client": "~58.0.17",
-    "react": "19.3.1",
-    "react-native": "0.88.0"
+    "expo": "~58.0.22",
+    "expo-dev-client": "~58.0.18",
+    "react": "19.3.0",
+    "react-native": "0.88.1"
   }
 }

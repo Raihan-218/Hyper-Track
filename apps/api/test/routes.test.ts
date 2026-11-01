@@ -38,12 +38,12 @@ function response(): FakeResponse {
   return value;
 }
 
-async function callRoute(router: unknown, method: string, path: string, body: unknown = {}, params: Record<string, string> = {}, authorization = `Bearer ${token}`) {
+async function callRoute(router: unknown, method: string, path: string, body: unknown = {}, params: Record<string, string> = {}, authorization = `Bearer ${token}`, query: Record<string, string> = {}) {
   const layer = (router as { stack: RouterLayer[] }).stack.find((candidate) => candidate.route?.path === path && candidate.route.methods[method.toLowerCase()]);
   assert.ok(layer?.route, `Missing ${method} ${path} route`);
   const res = response();
   const req: FakeRequest = {
-    body, params, query: {}, userId: undefined,
+    body, params, query, userId: undefined,
     header: (name: string) => name.toLowerCase() === "authorization" ? authorization : undefined
   };
   let authorized = false;
@@ -59,6 +59,26 @@ async function callRoute(router: unknown, method: string, path: string, body: un
 test("task routes reject requests without authentication", async () => {
   const result = await callRoute(tasksRouter, "get", "/", {}, {}, "");
   assert.equal(result.statusCode, 401);
+});
+
+test("archived task listing remains scoped to the authenticated user", async () => {
+  const originalFind = Task.find; const originalCount = Task.countDocuments;
+  let lookup: Record<string, unknown> | undefined;
+  Task.find = ((filter: Record<string, unknown>) => {
+    lookup = filter;
+    const chain = {
+      populate() { return chain; }, sort() { return chain; }, skip() { return chain; }, limit() { return chain; },
+      lean: async () => [{ _id: "507f1f77bcf86cd799439012", title: "Archived task" }]
+    };
+    return chain as never;
+  }) as typeof Task.find;
+  Task.countDocuments = (async () => 1) as typeof Task.countDocuments;
+  try {
+    const result = await callRoute(tasksRouter, "get", "/", {}, {}, undefined, { archived: "true" });
+    assert.equal(result.statusCode, 200);
+    assert.equal(lookup?.user, userId);
+    assert.deepEqual(lookup?.archivedAt, { $ne: null });
+  } finally { Task.find = originalFind; Task.countDocuments = originalCount; }
 });
 
 test("calendar, gamification, focus, and export routes reject anonymous requests", async () => {

@@ -42,7 +42,8 @@ tasksRouter.get("/", async (req: AuthRequest, res, next) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 100));
-    const filter: Record<string, unknown> = { user: req.userId, archivedAt: null };
+    const archived = String(req.query.archived ?? "false") === "true";
+    const filter: Record<string, unknown> = { user: req.userId, archivedAt: archived ? { $ne: null } : null };
     if (req.query.status && ["todo", "in_progress", "done"].includes(String(req.query.status))) filter.status = req.query.status;
     if (req.query.priority && ["low", "medium", "high"].includes(String(req.query.priority))) filter.priority = req.query.priority;
     if (typeof req.query.projectId === "string" && mongoose.isValidObjectId(req.query.projectId)) filter.project = req.query.projectId;

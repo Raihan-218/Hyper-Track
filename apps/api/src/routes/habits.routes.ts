@@ -7,6 +7,7 @@ import { HabitScheduleSnapshot } from "../models/HabitScheduleSnapshot.js";
 import { User } from "../models/User.js";
 import { awardXp, reverseXp, XP_REWARDS } from "../services/gamification.js";
 import { dateKeyAtInstant, isDateKey, nextDateKey, startOfLocalDay } from "../services/dateMetrics.js";
+import { longestScheduledStreak } from "../services/habitStreaks.js";
 import { requireAuth, type AuthRequest } from "../middleware/auth.js";
 
 export const habitsRouter = Router();
@@ -43,13 +44,12 @@ habitsRouter.get("/:id/analytics", async (req: AuthRequest, res, next) => {
     if (!isDateKey(from) || !isDateKey(to)) { res.status(400).json({ error: "from and to must be valid YYYY-MM-DD dates" }); return; }
     const span = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
     if (!Number.isInteger(span) || span < 0 || span > 365) { res.status(400).json({ error: "Date range must be between 1 and 366 days" }); return; }
-    const streakStart = new Date(`${to}T12:00:00Z`); streakStart.setUTCDate(streakStart.getUTCDate() - 365);
     const [habit, events, schedules, user, streakEvents] = await Promise.all([
       Habit.findOne({ _id: req.params.id, user: req.userId }).select("name").lean(),
       HabitCompletion.find({ user: req.userId, habit: req.params.id, localDate: { $gte: from, $lte: to }, reversedAt: null }).select("localDate reflection").lean(),
       HabitScheduleSnapshot.find({ user: req.userId, habit: req.params.id, validFromAt: { $lte: new Date() } }).select("name frequency targetPerWeek daysOfWeek validFromAt validToAt").sort({ validFromAt: -1 }).lean(),
       User.findById(req.userId).select("timezone").lean(),
-      HabitCompletion.find({ user: req.userId, habit: req.params.id, localDate: { $gte: streakStart.toISOString().slice(0, 10), $lte: to }, reversedAt: null }).select("localDate").lean()
+      HabitCompletion.find({ user: req.userId, habit: req.params.id, reversedAt: null }).select("localDate").lean()
     ]);
     if (!habit) { res.status(404).json({ error: "Habit not found" }); return; }
     const completed = new Set(events.map((event) => event.localDate));
@@ -66,7 +66,10 @@ habitsRouter.get("/:id/analytics", async (req: AuthRequest, res, next) => {
     const currentSchedule = schedules.find((item) => !item.validToAt) ?? schedules[0];
     const streakDates = new Set(streakEvents.map((event) => event.localDate));
     const weeklyTarget = currentSchedule?.frequency === "weekly" && !currentSchedule.daysOfWeek?.length ? currentSchedule.targetPerWeek * (span + 1) / 7 : null;
-    res.json({ habitId: String(habit._id), name: habit.name, from, to, totalCompletions: completed.size, scheduledDays: scheduled, missedScheduledDays: misses, completionPercent: scheduled ? Math.round(successful / scheduled * 100) : null, weeklyTargetCompletionPercent: weeklyTarget ? Math.min(100, Math.round(completed.size / weeklyTarget * 100)) : null, bestWeekday: Math.max(...weekdays) ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][bestWeekdayIndex] : null, completionDates: [...completed].sort(), currentStreak: currentSchedule && (currentSchedule.frequency === "daily" || currentSchedule.daysOfWeek.length) ? streakFrom([...streakDates], currentSchedule.frequency, currentSchedule.daysOfWeek ?? [], dateKeyAtInstant(new Date(), user?.timezone || "UTC")) : null, historyCoverage: "partial-before-completion-history-migration" });
+    const today = dateKeyAtInstant(new Date(), user?.timezone || "UTC");
+    const currentStreak = currentSchedule && (currentSchedule.frequency === "daily" || currentSchedule.daysOfWeek.length) ? streakFrom([...streakDates], currentSchedule.frequency, currentSchedule.daysOfWeek ?? [], today) : null;
+    const longestStreak = longestScheduledStreak(streakEvents.map((event) => event.localDate), schedules, today, user?.timezone || "UTC");
+    res.json({ habitId: String(habit._id), name: habit.name, from, to, totalCompletions: completed.size, scheduledDays: scheduled, missedScheduledDays: misses, completionPercent: scheduled ? Math.round(successful / scheduled * 100) : null, weeklyTargetCompletionPercent: weeklyTarget ? Math.min(100, Math.round(completed.size / weeklyTarget * 100)) : null, bestWeekday: Math.max(...weekdays) ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][bestWeekdayIndex] : null, completionDates: [...completed].sort(), currentStreak, longestStreak, historyCoverage: "partial-before-completion-history-migration" });
   } catch (error) { next(error); }
 });
 
