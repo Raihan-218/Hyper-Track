@@ -10,6 +10,7 @@ Updated 2026-11-02
 | 2. Dashboard and EXP redesign | Complete | Responsive productivity dashboard using the existing progression and XP data. |
 | 3. Tasks, projects, habits, and goals redesign | Complete | Dedicated responsive screens with existing workflows and additive archive/streak support. |
 | 4. Calendar redesign | Implementation complete; awaiting approval | Responsive month, week, and day views with event-backed activity, timezone-aware dates, task actions, and selected-day agenda. |
+| 5. Monorepo and build workflow reorganization | Partially complete | Root command interface, one Expo configuration root, centralized dependencies, docs, and CI validation are in place. The canonical Android project now builds and installs with the Windows CMake/Ninja fix. The legacy root Android tree and APK remain preserved as requested. |
 
 ## Phase status
 
@@ -22,7 +23,7 @@ Updated 2026-11-02
 | 4. Habit and task enhancements | Partial | Habit categories/difficulty and schedule-aware individual analytics; task text/priority filters; recurrence keeps local wall time across DST. | Kanban, templates, notes/duration, category filters, full habit calendar/heatmap, reminders/reflections, richer project detail and task links. |
 | 5. Analytics and insights | Partial | Event-backed day/week/month totals, productive-day data, progress bars, daily/weekly/month range selector. | Dedicated charts/heatmap, consistency denominators for flexible weekly targets, richer weekly review and trend comparisons. |
 | 6. Additional features | Selected features implemented | Focus session API/mobile timer and JSON/CSV export endpoints. | Native file save/share flow, focus breaks/history/task linking, journal, widgets, theme accents, and contextual smart notifications were evaluated and deferred. |
-| 7. QA and release prep | Checks and docs in place; not release-ready | TypeScript checks, API unit tests, Expo public-config validation, migration instructions, CI Expo validation step, security/ownership review of new routes. | No MongoDB-backed integration or mobile device tests exist yet. The root checked-in Android project has an application ID mismatch and debug release signing; reconcile it before using that project. Configure and verify store signing credentials. |
+| 7. QA and release prep | Checks and docs in place; not release-ready | TypeScript checks, API unit tests, Expo public-config validation, migration instructions, CI Expo validation step, security/ownership review of new routes. | No MongoDB-backed integration or mobile device tests exist yet. Configure and verify store signing credentials. |
 
 ## Validation run
 
@@ -39,6 +40,14 @@ Milestone 2 validation on 2026-11-01: `npm run typecheck`, `npm run test:api` (1
 All five commands passed; the Expo web bundle completed for 857 modules. The API suite currently uses mocked route handlers plus pure date/XP tests; it does not prove MongoDB transaction or index behavior. No database or native-device environment was configured for this pass.
 
 Milestone 4 validation on 2026-11-02: `npm run typecheck`, `npm run test:api` (16 passed), `npm run validate:expo`, and `npm exec --workspace=@hyper-track/mobile -- expo export --platform web --output-dir .expo/milestone4-export` passed. The web bundle completed for 865 modules. Calendar views have not been visually reviewed on native phone/tablet devices or with a live account.
+
+Monorepo restructuring validation on 2026-11-02: root `npm install` lock/workspace resolution, `npm run typecheck`, `npm run test:api` (16 passed), `npm run validate:expo`, `npm run doctor`, and `npm run export:web` all passed. Expo entry resolution from the mobile workspace selects `expo-router/entry.js`; Metro bundled the mobile app. Root scripts now route to explicit workspaces, and CI also checks Expo compatibility and web export.
+
+Android native build troubleshooting on 2026-11-02: the original Reanimated failure was caused by the SDK's default CMake 3.22.1 bundling Ninja 1.10.2, which cannot create the deeply nested object directory formed from Reanimated's absolute Windows source path (`CMakeFiles/reanimated.dir/D_/Project/.../CSS/common/filters`). Windows long paths are enabled (`LongPathsEnabled=1`), CMake's object path limit was 1024, and the failure occurred in Ninja's directory creation before C++ compilation; this was not an Expo/RN/Reanimated compatibility failure. Installed versions are Expo 58.0.22, React Native 0.88.1, Reanimated 4.7.1 (peer range supports RN 0.86–0.88), Android Gradle Plugin 9.2.1, and Gradle 9.4.1.
+
+The mobile Android project now selects CMake 3.31.6 through `android.cmakeVersion` in `apps/mobile/android/gradle.properties`; its bundled Ninja is 1.12.1. No application dependency was changed, and the legacy root Android project/APK were not touched. `npm run android` completed Gradle successfully, including Reanimated CMake compilation. The generated APK is `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk` (89,865,872 bytes). `adb install -r` returned `Success`; `pm path com.hypertrack.app` found the installed package; `com.hypertrack.app/.MainActivity` launched. Metro served `node_modules/expo-router/entry.js` (1,363 modules), and React Native logged `Running "main"`.
+
+The emulator's first-run Expo development-client prompt remained visible in UI automation, and synthetic taps did not advance it; screenshots were black despite the app activity and JS runtime starting. ADB transport resets also dropped the reverse tunnel during early attempts; after re-establishing `adb reverse tcp:8081 tcp:8081`, device reachability to Metro was confirmed and Metro delivered the Router bundle. The build, install, activity launch, and JS bundle are verified, but an interactive route-screen visual check remains unconfirmed in this emulator. The legacy APK remains at `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Required rollout order
 

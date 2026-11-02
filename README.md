@@ -1,6 +1,6 @@
 # Hyper Track
 
-A cross-platform productivity app. Initial target: Android and iOS; web can be added after the mobile MVP.
+A cross-platform productivity app. Android, iOS, and web share one Expo application in `apps/mobile`.
 
 ## Stack
 - Mobile: Expo + React Native + Expo Router + TypeScript
@@ -14,17 +14,23 @@ A cross-platform productivity app. Initial target: Android and iOS; web can be a
 ```text
 hyper-track/
   apps/
-    api/       Express REST API
-    mobile/    Expo Android/iOS app
+    api/       Express REST API and tests
+    mobile/    Expo Router app and its Android native project
   packages/
-    shared/   Shared TypeScript types
+    shared/    Shared TypeScript types
+  scripts/     Root development and cleanup helpers
+  package.json Root command interface and npm workspace definition
+  package-lock.json  Authoritative lockfile for all workspaces
 ```
+
+`apps/mobile` is the only Expo project root and the canonical Android project. Run commands from the repository root; root scripts explicitly target their workspace. Open `apps/mobile/android` in Android Studio. A stale root `android/` tree and its debug APK are retained temporarily as a rollback artifact because the canonical Android app has not yet passed a full install-and-launch check on this Windows environment; do not use that root tree for new builds.
 
 ## Requirements
 - Node.js 20.19+ (or a currently supported LTS release)
 - npm 10+
+- Java 17 and Android Studio with Android SDK Platform Tools for Android builds
 - MongoDB local instance or MongoDB Atlas URI
-- Expo Go on your phone for a quick development preview; native builds can use EAS later
+- Android emulator or a USB-debugging-enabled Android device for `npm run android`
 
 ## 1. Install dependencies
 From the repository root:
@@ -35,9 +41,7 @@ npm install
 
 ## 2. Configure the API
 
-```bash
-cp apps/api/.env.example apps/api/.env
-```
+Create `apps/api/.env` from `apps/api/.env.example` (PowerShell: `Copy-Item apps/api/.env.example apps/api/.env`; Bash: `cp apps/api/.env.example apps/api/.env`).
 
 Set `MONGODB_URI` and a long random `JWT_SECRET` in `apps/api/.env`. Never commit `.env`.
 
@@ -51,20 +55,64 @@ API health check: `http://localhost:4000/health`
 
 ## 3. Configure the mobile app
 
-Create `apps/mobile/.env` based on `apps/mobile/.env.example`.
+Create `apps/mobile/.env` from `apps/mobile/.env.example`. The root `.env.example` is a reference; Expo loads the mobile workspace file and the API loads `apps/api/.env`.
 
 Set `EXPO_PUBLIC_API_URL` to an address the device can reach:
 - Android emulator: `http://10.0.2.2:4000/api`
 - iOS simulator: `http://localhost:4000/api`
 - Physical phone: `http://YOUR_COMPUTER_LAN_IP:4000/api` (phone and computer on the same Wi-Fi)
 
-Then run:
+Start only the mobile development server:
 
 ```bash
 npm run dev:mobile
 ```
 
-Scan the Expo QR code using Expo Go. If a physical device cannot reach the API, check the computer firewall and LAN IP.
+The root command runs Expo with `apps/mobile` as its working project, so Expo Router resolves `expo-router/entry`. For the API and mobile server together, use `npm run dev`. For the API alone, use `npm run dev:api`.
+
+### Android build and APK
+
+Start an Android emulator or connect a device, then run from the repository root:
+
+```bash
+npm run android
+```
+
+This runs Expo’s Android development build from `apps/mobile`, then installs and launches the app and connects to Metro when native compilation succeeds. The debug APK is generated at:
+
+```text
+apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+The Android Studio project is `apps/mobile/android`. The app ID is `com.hypertrack.app`, matching `apps/mobile/app.json`. Release builds still require production signing credentials; the checked-in Gradle release variant currently uses the debug signing config and is not suitable for store distribution.
+
+### Web, diagnostics, and cleanup
+
+```bash
+npm run export:web     # Export the mobile app for web into apps/mobile/dist
+npm run doctor         # Validate Expo config and SDK package compatibility
+npm run clean          # Remove generated Expo/API/mobile Android build outputs
+```
+
+`npm run clean` preserves source files, dependencies, `.env` files, Android `local.properties`, and the legacy root Android APK while cleaning only its explicit generated-output allowlist.
+
+### Root command reference
+
+```bash
+npm install
+npm run dev:api
+npm run dev:mobile
+npm run dev
+npm run android
+npm run typecheck
+npm run test:api
+npm run validate:expo
+npm run doctor
+npm run export:web
+npm run clean
+```
+
+`npm run dev` starts both services; press Ctrl+C to stop them. For Android troubleshooting, confirm `adb devices` lists the emulator/device, USB debugging is enabled, and the device can reach the API URL. The app’s Metro/Expo commands always execute in the mobile workspace; do not run `expo` or Gradle from the repository root.
 
 ## API endpoints in this starter
 
@@ -120,7 +168,7 @@ Current streaks and badges are an initial consistency model. Individual habit an
 
 The focus timer records sessions but does not yet implement break scheduling, task linking in the mobile UI, or background notifications. CSV/JSON export endpoints are available to authenticated clients; a native share/save flow is still needed in the app. Widgets and a private journal were deferred because they require native platform work and additional privacy controls.
 
-The main mobile route remains a large screen component; the design primitives are reusable, but the light palette has not yet been applied throughout every legacy screen style. Release credentials and signing need to be configured for the target app. The checked-in root Android project still has a different application ID from the Expo app config and uses debug signing for release builds; do not ship that native project until its identity and signing are reconciled.
+The main mobile route remains a large screen component; the design primitives are reusable, but the light palette has not yet been applied throughout every legacy screen style. Release credentials and signing need to be configured for the target app. The canonical Android release variant currently uses the debug signing config and is not suitable for store distribution until production signing is configured.
 
 Run `npm run typecheck`, `npm run test:api`, and `npm run validate:expo` from the repository root. MongoDB-backed migration, API integration, and Android/iOS device-flow verification must run in a configured environment before a store release.
 

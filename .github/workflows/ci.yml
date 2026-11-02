@@ -17,3 +17,5 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:api
       - run: npm run validate:expo
+      - run: npm run doctor
+      - run: npm run export:web
