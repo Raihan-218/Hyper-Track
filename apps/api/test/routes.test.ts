@@ -9,7 +9,7 @@ process.env.JWT_SECRET = "test-secret-that-is-long-enough-to-pass-validation";
 process.env.JWT_EXPIRES_IN = "15m";
 process.env.CORS_ORIGIN = "http://localhost";
 
-const [{ tasksRouter }, { habitsRouter }, { calendarRouter }, { gamificationRouter }, { focusRouter }, { exportRouter }, { errorHandler }, { requireAuth }, { Task }, { Habit }] = await Promise.all([
+const [{ tasksRouter }, { habitsRouter }, { calendarRouter }, { gamificationRouter }, { focusRouter }, { exportRouter }, { errorHandler }, { requireAuth }, { Task }, { Habit }, { TaskCompletion }, { HabitCompletion }, { HabitScheduleSnapshot }, { User }, { XPTransaction }, { UserGamification }] = await Promise.all([
   import("../src/routes/tasks.routes.js"),
   import("../src/routes/habits.routes.js"),
   import("../src/routes/calendar.routes.js"),
@@ -19,7 +19,13 @@ const [{ tasksRouter }, { habitsRouter }, { calendarRouter }, { gamificationRout
   import("../src/middleware/errors.js"),
   import("../src/middleware/auth.js"),
   import("../src/models/Task.js"),
-  import("../src/models/Habit.js")
+  import("../src/models/Habit.js"),
+  import("../src/models/TaskCompletion.js"),
+  import("../src/models/HabitCompletion.js"),
+  import("../src/models/HabitScheduleSnapshot.js"),
+  import("../src/models/User.js"),
+  import("../src/models/XPTransaction.js"),
+  import("../src/models/UserGamification.js")
 ]);
 
 const userId = "507f1f77bcf86cd799439011";
@@ -43,7 +49,7 @@ async function callRoute(router: unknown, method: string, path: string, body: un
   assert.ok(layer?.route, `Missing ${method} ${path} route`);
   const res = response();
   const req: FakeRequest = {
-    body, params, query, userId: undefined,
+    body, params, query, userId: undefined, method: method.toUpperCase(), originalUrl: path,
     header: (name: string) => name.toLowerCase() === "authorization" ? authorization : undefined
   };
   let authorized = false;
@@ -59,6 +65,18 @@ async function callRoute(router: unknown, method: string, path: string, body: un
 test("task routes reject requests without authentication", async () => {
   const result = await callRoute(tasksRouter, "get", "/", {}, {}, "");
   assert.equal(result.statusCode, 401);
+});
+
+test("authentication rejects a signed token with no user subject before creation", async () => {
+  const original = Task.create;
+  let writes = 0;
+  Task.create = (async () => { writes += 1; return {}; }) as typeof Task.create;
+  try {
+    const tokenWithoutSubject = jwt.sign({}, process.env.JWT_SECRET!);
+    const result = await callRoute(tasksRouter, "post", "/", { title: "Should not save" }, {}, `Bearer ${tokenWithoutSubject}`);
+    assert.equal(result.statusCode, 401);
+    assert.equal(writes, 0);
+  } finally { Task.create = original; }
 });
 
 test("archived task listing remains scoped to the authenticated user", async () => {
@@ -96,11 +114,108 @@ test("task creation validates input and assigns the authenticated owner", async 
     return { ...input, _id: "507f1f77bcf86cd799439012" };
   }) as typeof Task.create;
   try {
-    const response = await callRoute(tasksRouter, "post", "/", { title: "Write weekly plan", priority: "high" });
+    const response = await callRoute(tasksRouter, "post", "/", { title: "Write weekly plan", priority: "high", user: "507f1f77bcf86cd799439099" });
     assert.equal(response.statusCode, 201);
     assert.equal(created?.user, userId);
     assert.equal(created?.title, "Write weekly plan");
   } finally { Task.create = original; }
+});
+
+test("task creation accepts the mobile editor's explicit nullable optional fields", async () => {
+  const original = Task.create;
+  Task.create = (async (input: Record<string, unknown>) => ({ ...input, _id: "507f1f77bcf86cd799439013" })) as typeof Task.create;
+  try {
+    const result = await callRoute(tasksRouter, "post", "/", {
+      title: "Mobile form task", priority: "medium", dueDate: null, plannedDate: null,
+      reminderAt: null, recurrence: "none", projectId: null, parentTaskId: null
+    });
+    assert.equal(result.statusCode, 201);
+  } finally { Task.create = original; }
+});
+
+test("task completion records one completion event and awards XP after a valid status update", async () => {
+  const originalFind = Task.findOne;
+  const originalUpdate = Task.findOneAndUpdate;
+  const originalCompletionCreate = TaskCompletion.create;
+  const originalUserFind = User.findById;
+  const originalXpCreate = XPTransaction.create;
+  const originalGameUpdate = UserGamification.updateOne;
+  const taskId = "507f1f77bcf86cd799439014";
+  const current = { _id: taskId, title: "Finish the report", priority: "high", status: "todo", recurrence: "none", dueDate: undefined, plannedDate: undefined, project: null, parentTask: null };
+  let completion: Record<string, unknown> | undefined;
+  let xp: Record<string, unknown> | undefined;
+  Task.findOne = (() => ({ lean: async () => current })) as typeof Task.findOne;
+  Task.findOneAndUpdate = (async () => ({ ...current, status: "done", completedAt: new Date() })) as typeof Task.findOneAndUpdate;
+  TaskCompletion.create = (async (input: Record<string, unknown>) => { completion = input; return { ...input, _id: "507f1f77bcf86cd799439015" }; }) as typeof TaskCompletion.create;
+  User.findById = (() => ({ select: () => ({ lean: async () => ({ timezone: "Asia/Kolkata" }) }) })) as typeof User.findById;
+  XPTransaction.create = (async (input: Record<string, unknown>) => { xp = input; }) as typeof XPTransaction.create;
+  UserGamification.updateOne = (async () => ({})) as typeof UserGamification.updateOne;
+  try {
+    const result = await callRoute(tasksRouter, "patch", "/:id", { status: "done" }, { id: taskId });
+    assert.equal(result.statusCode, 200);
+    assert.equal(completion?.task, taskId);
+    assert.equal(completion?.timezone, "Asia/Kolkata");
+    assert.equal(completion?.priority, "high");
+    assert.equal(xp?.amount, 15);
+    assert.equal(xp?.activityType, "task");
+    assert.equal(xp?.user, userId, "the XP ledger is owned by the authenticated user");
+    assert.equal("userId" in (xp ?? {}), false);
+  } finally {
+    Task.findOne = originalFind; Task.findOneAndUpdate = originalUpdate;
+    TaskCompletion.create = originalCompletionCreate; User.findById = originalUserFind;
+    XPTransaction.create = originalXpCreate; UserGamification.updateOne = originalGameUpdate;
+  }
+});
+
+test("habit creation accepts the mobile editor's weekly schedule payload", async () => {
+  const originalCreate = Habit.create;
+  const originalSnapshotCreate = HabitScheduleSnapshot.create;
+  let saved: Record<string, unknown> | undefined;
+  Habit.create = (async (input: Record<string, unknown>) => {
+    saved = input;
+    return { ...input, _id: "507f1f77bcf86cd799439016", createdAt: new Date() };
+  }) as typeof Habit.create;
+  HabitScheduleSnapshot.create = (async () => ({})) as typeof HabitScheduleSnapshot.create;
+  try {
+    const result = await callRoute(habitsRouter, "post", "/", {
+      name: "Weekly review", category: "Personal", difficulty: "medium", frequency: "weekly", targetPerWeek: 3, daysOfWeek: [1, 3, 5], user: "507f1f77bcf86cd799439099"
+    });
+    assert.equal(result.statusCode, 201);
+    assert.equal(saved?.targetPerWeek, 3);
+    assert.deepEqual(saved?.daysOfWeek, [1, 3, 5]);
+    assert.equal(saved?.user, userId);
+  } finally { Habit.create = originalCreate; HabitScheduleSnapshot.create = originalSnapshotCreate; }
+});
+
+test("habit completion and its XP ledger use the authenticated owner", async () => {
+  const originalEventFind = HabitCompletion.findOne;
+  const originalHabitUpdate = Habit.findOneAndUpdate;
+  const originalEventCreate = HabitCompletion.create;
+  const originalUserFind = User.findById;
+  const originalXpCreate = XPTransaction.create;
+  const originalGameUpdate = UserGamification.updateOne;
+  const habitId = "507f1f77bcf86cd799439016";
+  let completion: Record<string, unknown> | undefined;
+  let xp: Record<string, unknown> | undefined;
+  HabitCompletion.findOne = (async () => null) as typeof HabitCompletion.findOne;
+  Habit.findOneAndUpdate = (async () => ({ _id: habitId, name: "Read", completions: ["2026-11-02"] })) as typeof Habit.findOneAndUpdate;
+  HabitCompletion.create = (async (input: Record<string, unknown>) => { completion = input; return { ...input, _id: "507f1f77bcf86cd799439017" }; }) as typeof HabitCompletion.create;
+  User.findById = (() => ({ select: () => ({ lean: async () => ({ timezone: "Asia/Kolkata" }) }) })) as typeof User.findById;
+  XPTransaction.create = (async (input: Record<string, unknown>) => { xp = input; }) as typeof XPTransaction.create;
+  UserGamification.updateOne = (async () => ({})) as typeof UserGamification.updateOne;
+  try {
+    const result = await callRoute(habitsRouter, "post", "/:id/completions", { date: "2026-11-02" }, { id: habitId });
+    assert.equal(result.statusCode, 200);
+    assert.equal(completion?.user, userId);
+    assert.equal(completion?.habit, habitId);
+    assert.equal(xp?.user, userId);
+    assert.equal(xp?.activityType, "habit");
+    assert.equal("userId" in (xp ?? {}), false);
+  } finally {
+    HabitCompletion.findOne = originalEventFind; Habit.findOneAndUpdate = originalHabitUpdate;
+    HabitCompletion.create = originalEventCreate; User.findById = originalUserFind;
+    XPTransaction.create = originalXpCreate; UserGamification.updateOne = originalGameUpdate;
+  }
 });
 
 test("task updates scope lookup to the authenticated owner", async () => {
@@ -116,6 +231,25 @@ test("task updates scope lookup to the authenticated owner", async () => {
     assert.equal(lookup?.user, userId);
     assert.equal(lookup?.archivedAt, null);
   } finally { Task.findOne = original; }
+});
+
+test("task updates ignore client-supplied owner changes and retain authenticated ownership scope", async () => {
+  const originalFind = Task.findOne;
+  const originalUpdate = Task.findOneAndUpdate;
+  const taskId = "507f1f77bcf86cd799439018";
+  const current = { _id: taskId, title: "Original", priority: "medium", status: "todo", recurrence: "none", project: null, parentTask: null };
+  let lookup: Record<string, unknown> | undefined;
+  let filter: Record<string, unknown> | undefined;
+  let changes: Record<string, unknown> | undefined;
+  Task.findOne = ((query: Record<string, unknown>) => { lookup = query; return { lean: async () => current }; }) as typeof Task.findOne;
+  Task.findOneAndUpdate = (async (query: Record<string, unknown>, update: Record<string, unknown>) => { filter = query; changes = update; return { ...current, title: "Updated" }; }) as typeof Task.findOneAndUpdate;
+  try {
+    const response = await callRoute(tasksRouter, "patch", "/:id", { title: "Updated", user: "507f1f77bcf86cd799439099" }, { id: taskId });
+    assert.equal(response.statusCode, 200);
+    assert.equal(lookup?.user, userId);
+    assert.equal(filter?.user, userId);
+    assert.equal((changes?.$set as Record<string, unknown>).user, undefined);
+  } finally { Task.findOne = originalFind; Task.findOneAndUpdate = originalUpdate; }
 });
 
 test("habit updates reject invalid schedules before touching persistence", async () => {

@@ -18,6 +18,13 @@ const QUEUE_KEY = "hyper_track_offline_create_queue";
 
 type QueuedCreate = { path: string; body: Record<string, unknown>; createdAt: string };
 
+export class ApiRequestError extends Error {
+  constructor(message: string, readonly status: number, readonly mayHaveApplied: boolean) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 async function flushQueuedCreates(accessToken: string): Promise<void> {
   if (!queueFlushInFlight) {
     queueFlushInFlight = (async () => {
@@ -141,8 +148,17 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     }
   }
   if (response.status === 204) return undefined as T;
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error ?? `Request failed (${response.status})`);
+  const payloadValue = await response.json().catch(() => ({}));
+  const payload = payloadValue && typeof payloadValue === "object" ? payloadValue as { error?: unknown; source?: unknown; details?: unknown } : {};
+  if (!response.ok) {
+    const details = Array.isArray(payload.details)
+      ? (payload.details as Array<{ path?: unknown; message?: unknown }>).slice(0, 3)
+          .filter((item) => !!item && typeof item === "object" && typeof item.message === "string")
+          .map((item) => `${typeof item.path === "string" && item.path ? `${item.path.replace(/([a-z])([A-Z])/g, "$1 $2")}: ` : ""}${item.message}`)
+      : [];
+    const message = [typeof payload.error === "string" ? payload.error : `Request failed (${response.status})`, ...details].join(" ");
+    throw new ApiRequestError(message, response.status, payload.source === "persistence-validation" || response.status >= 500);
+  }
   if (method === "GET") await AsyncStorage.setItem(`${CACHE_PREFIX}${path}`, JSON.stringify(payload));
   return payload as T;
 }

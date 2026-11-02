@@ -7,9 +7,11 @@ export { levelForXp } from "./levels.js";
 export const XP_REWARDS = { task: env.XP_REWARD_TASK, highPriorityTask: env.XP_REWARD_HIGH_PRIORITY_TASK, habit: env.XP_REWARD_HABIT, milestone: env.XP_REWARD_MILESTONE } as const;
 
 export async function awardXp(input: { userId: string; eventKey: string; activityType: "task" | "habit" | "milestone"; activityId: Types.ObjectId; description: string; amount: number; localDate: string }) {
+  if (!mongoose.isValidObjectId(input.userId)) throw new Error("Authenticated user context is required to award XP");
+  const { userId, ...transaction } = input;
   try {
-    await XPTransaction.create(input);
-    await UserGamification.updateOne({ user: input.userId }, { $inc: { totalXp: input.amount }, $setOnInsert: { user: input.userId } }, { upsert: true });
+    await XPTransaction.create({ ...transaction, user: userId });
+    await UserGamification.updateOne({ user: userId }, { $inc: { totalXp: input.amount }, $setOnInsert: { user: userId } }, { upsert: true });
   } catch (error) {
     if (!(error instanceof mongoose.mongo.MongoServerError) || error.code !== 11000) throw error;
   }

@@ -4,12 +4,13 @@ import { api } from "../lib/api";
 import type { TaskRecord } from "./TaskManagementScreen";
 import { AppButton, AppCard, AppText, EmptyState, ProgressBar } from "./ui";
 import { fontSizes, radii, spacing, useAppTheme } from "../theme/theme";
+import { taskCompletionEventKey, uniqueTaskCompletionEvents } from "../lib/calendarEventKeys";
 
 type CalendarMode = "month" | "week" | "day";
 type DaySummary = { plannedTasks: number; completedTasks: number; completedHabits: number; scheduledHabits: number };
 type CalendarRange = { days: Record<string, DaySummary>; historyCoverage: string };
 type PlannedTask = { task: string; title: string; priority: "low" | "medium" | "high"; status: "todo" | "done" };
-type Completion = { task: string; title: string; priority: string; reversedAt?: string | null };
+type Completion = { _id: string; task: string; title: string; priority: string; reversedAt?: string | null };
 type HabitEvent = { habit: string; name: string; reversedAt?: string | null };
 type DayDetail = { date: string; isFuture: boolean; plannedTasks: PlannedTask[]; completedTasks: Completion[]; pendingTasks: PlannedTask[]; scheduledHabits: Array<{ _id: string; name: string }>; completedHabits: HabitEvent[]; reversedHabitCompletions: HabitEvent[]; habitCompletionPercent: number | null; xpEarned: number | null; historyCoverage: string };
 const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -47,7 +48,7 @@ export function CalendarScreen({ today, timezone, tasks, initialDate, onDateChan
         api<CalendarRange>(`/calendar?from=${calendarBounds.from}&to=${calendarBounds.to}`),
         api<DayDetail>(`/calendar/day/${selectedDate}`)
       ]);
-      if (request === requestId.current) { setRange(month); setDetail(day); }
+      if (request === requestId.current) { setRange(month); setDetail({ ...day, completedTasks: uniqueTaskCompletionEvents(day.completedTasks) }); }
     } catch (cause) { if (request === requestId.current) setError(cause instanceof Error ? cause.message : "Calendar data is unavailable."); }
     finally { if (request === requestId.current) setLoading(false); }
   }, [calendarBounds.from, calendarBounds.to, selectedDate]);
@@ -93,7 +94,7 @@ export function CalendarScreen({ today, timezone, tasks, initialDate, onDateChan
     </Pressable>;
   };
 
-  const taskLine = (item: PlannedTask | Completion, status: "planned" | "completed" | "overdue") => {
+  const taskLine = (item: Pick<PlannedTask, "task" | "title" | "priority"> & Partial<Pick<PlannedTask, "status">>, status: "planned" | "completed" | "overdue") => {
     const task = matchedForTask(item.task); const complete = status === "completed" || ("status" in item && item.status === "done");
     return <View key={`${item.task}-${status}`} style={[styles.agendaRow, { borderBottomColor: colors.border }]}>
       <View style={[styles.eventRail, { backgroundColor: status === "overdue" ? colors.danger : complete ? colors.success : colors.primary }]} />
@@ -108,7 +109,7 @@ export function CalendarScreen({ today, timezone, tasks, initialDate, onDateChan
       {!detail.isFuture && <View style={styles.daySummary}><View style={styles.summaryStats}><AppText size={12} weight="semibold">{detail.plannedTasks.filter((task) => task.status === "done").length} / {detail.plannedTasks.length} tasks</AppText><AppText size={12} muted>{detail.habitCompletionPercent ?? 0}% habits</AppText>{detail.xpEarned !== null && <AppText size={12} muted>{detail.xpEarned} XP</AppText>}</View><ProgressBar value={detail.plannedTasks.length ? detail.plannedTasks.filter((task) => task.status === "done").length / detail.plannedTasks.length * 100 : 0} /></View>}
       <View style={styles.agendaSection}><AppText size={11} weight="bold" muted>PLANNED TASKS</AppText>{detail.plannedTasks.length ? detail.plannedTasks.map((item) => taskLine(item, item.status === "done" ? "completed" : "planned")) : <AppText size={12} muted style={styles.emptyInline}>No tasks planned for this date.</AppText>}</View>
       {selectedDate === today && overdue.length > 0 && <View style={styles.agendaSection}><AppText size={11} weight="bold" style={{ color: colors.danger }}>OVERDUE · {overdue.length}</AppText>{overdue.map((task) => taskLine({ task: task._id, title: task.title, priority: task.priority }, "overdue"))}</View>}
-      <View style={styles.agendaSection}><AppText size={11} weight="bold" muted>COMPLETION RECORDS</AppText>{detail.completedTasks.length ? detail.completedTasks.map((event) => <View key={`${event.task}-${event.reversedAt ?? "done"}`} style={styles.recordRow}><AppText size={12} style={{ color: event.reversedAt ? colors.textMuted : colors.success }}>{event.reversedAt ? "↶" : "✓"}</AppText><AppText size={12} style={{ flex: 1, color: event.reversedAt ? colors.textMuted : colors.text }}>{event.title}{event.reversedAt ? " · later reversed" : ""}</AppText></View>) : <AppText size={12} muted style={styles.emptyInline}>No recorded task completions.</AppText>}</View>
+      <View style={styles.agendaSection}><AppText size={11} weight="bold" muted>COMPLETION RECORDS</AppText>{detail.completedTasks.length ? detail.completedTasks.map((event) => <View key={taskCompletionEventKey(event)} style={styles.recordRow}><AppText size={12} style={{ color: event.reversedAt ? colors.textMuted : colors.success }}>{event.reversedAt ? "↶" : "✓"}</AppText><AppText size={12} style={{ flex: 1, color: event.reversedAt ? colors.textMuted : colors.text }}>{event.title}{event.reversedAt ? " · later reversed" : ""}</AppText></View>) : <AppText size={12} muted style={styles.emptyInline}>No recorded task completions.</AppText>}</View>
       {deadlines.length > 0 && <View style={styles.agendaSection}><AppText size={11} weight="bold" style={{ color: colors.warning }}>DEADLINES · {deadlines.length}</AppText>{deadlines.map((task) => <View key={task._id} style={styles.recordRow}><AppText size={12} style={{ color: colors.warning }}>◆</AppText><AppText size={12} style={{ flex: 1 }}>{task.title}{task.status === "done" ? " · complete" : ""}</AppText></View>)}</View>}
       <View style={styles.agendaSection}><AppText size={11} weight="bold" muted>HABITS</AppText>{detail.scheduledHabits.length ? detail.scheduledHabits.map((habit) => { const done = detail.completedHabits.some((event) => event.habit === habit._id && !event.reversedAt); return <View key={habit._id} style={styles.recordRow}><AppText size={12} style={{ color: done ? colors.success : colors.primary }}>{done ? "✓" : "○"}</AppText><AppText size={12} style={{ flex: 1 }}>{habit.name}</AppText><AppText size={11} muted>{done ? "Complete" : "Scheduled"}</AppText></View>; }) : <AppText size={12} muted style={styles.emptyInline}>No habits scheduled.</AppText>}</View>
       {detail.reversedHabitCompletions.length > 0 && <View style={styles.agendaSection}><AppText size={11} weight="bold" muted>REVERSED CHECK-INS</AppText>{detail.reversedHabitCompletions.map((event, index) => <View key={`${event.habit}-${index}`} style={styles.recordRow}><AppText size={12} muted>↶</AppText><AppText size={12} muted>{event.name}</AppText></View>)}</View>}

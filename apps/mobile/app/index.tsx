@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { api, clearOfflineApiData, isApiOffline } from "../src/lib/api";
+import { api, ApiRequestError, clearOfflineApiData, isApiOffline } from "../src/lib/api";
 import { clearToken, getToken, saveRefreshToken, saveToken } from "../src/lib/auth";
 import { clearAllTaskReminders, clearTaskReminder, configureNotifications, ensureTaskReminder, setTaskReminder } from "../src/lib/notifications";
 import type { AuthUserDTO, DailyProgressDTO, GoalDTO, HabitDTO, ProjectDTO, TaskDTO } from "@hyper-track/shared";
@@ -122,23 +122,27 @@ export default function HomeScreen() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isOffline, setIsOffline] = useState(false);
+  const loadRequestId = useRef(0);
 
   async function loadData() {
+    const requestId = ++loadRequestId.current;
     const [firstTaskPage, habitData, progressData, goalData, projectData] = await Promise.all([
       api<TaskPage>("/tasks?limit=100"), api<{ habits: Habit[] }>("/habits"), api<WeeklySummary>("/progress/weekly"), api<{ goals: Goal[] }>("/goals"), api<{ projects: Project[] }>("/projects")
     ]);
     let laterPages: TaskPage[] = [];
-    setTaskCoveragePartial(false);
+    if (requestId === loadRequestId.current) setTaskCoveragePartial(false);
     try {
       laterPages = await Promise.all(Array.from({ length: Math.max(0, Math.ceil(firstTaskPage.total / firstTaskPage.limit) - 1) }, (_, index) => api<TaskPage>(`/tasks?limit=${firstTaskPage.limit}&page=${index + 2}`)));
     } catch (error) {
       if (!isApiOffline()) throw error;
-      setTaskCoveragePartial(firstTaskPage.total > firstTaskPage.limit);
+      if (requestId === loadRequestId.current) setTaskCoveragePartial(firstTaskPage.total > firstTaskPage.limit);
     }
+    if (requestId !== loadRequestId.current) return;
     const allTasks = [ ...firstTaskPage.tasks, ...laterPages.flatMap((page) => page.tasks) ];
     setTasks(allTasks); setHabits(habitData.habits); setWeekly(progressData); setGoals(goalData.goals); setProjects(projectData.projects);
-    try { const focus = await api<{ active: FocusDTO | null }>("/focus"); setFocusSession(focus.active); } catch { /* Focus is optional when offline. */ }
-    try { setGameSummary(await api<GameSummary>("/gamification")); } catch { /* Keep the core dashboard usable if rewards are temporarily unavailable. */ }
+    try { const focus = await api<{ active: FocusDTO | null }>("/focus"); if (requestId === loadRequestId.current) setFocusSession(focus.active); } catch { /* Focus is optional when offline. */ }
+    try { const summary = await api<GameSummary>("/gamification"); if (requestId === loadRequestId.current) setGameSummary(summary); } catch { /* Keep the core dashboard usable if rewards are temporarily unavailable. */ }
+    if (requestId !== loadRequestId.current) return;
     await Promise.all(allTasks.filter((task) => !task._id.startsWith("local-") && task.reminderAt).map((task) => ensureTaskReminder(task._id, task.title, task.reminderAt).catch(() => undefined)));
     setIsOffline(isApiOffline());
   }
@@ -194,7 +198,14 @@ export default function HomeScreen() {
           setProfileName(result.user.name); setProfileTimezone(result.user.timezone ?? "UTC");
           await loadData();
         }
-      } catch { await clearToken(); await clearOfflineApiData(); }
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 401) {
+          await clearToken(); await clearOfflineApiData();
+        } else {
+          setIsOffline(isApiOffline());
+          setError(error instanceof Error ? error.message : "Could not refresh your data. Your saved sign-in is still on this device.");
+        }
+      }
       finally { setLoading(false); }
     })();
   }, []);
@@ -254,12 +265,12 @@ export default function HomeScreen() {
       }
       resetTaskForm(); await loadData();
     }
-    catch (e) { showError(e); }
+    catch (e) { await reconcileAfterUncertainWrite(e); showError(e); }
   }
 
   async function deleteTask(task: Task) {
     try { await api(`/tasks/${task._id}`, { method: "DELETE" }); await Promise.all([task, ...tasks.filter((item) => item.parentTask?._id === task._id)].map((item) => clearTaskReminder(item._id))); if (editingTask === task._id) { setEditingTask(null); setNewTask(""); } await loadData(); }
-    catch (e) { showError(e); }
+    catch (e) { await reconcileAfterUncertainWrite(e); showError(e); }
   }
 
   async function toggleTask(task: Task) {
@@ -270,7 +281,7 @@ export default function HomeScreen() {
       } else await clearTaskReminder(task._id);
       await loadData();
     }
-    catch (e) { showError(e); }
+    catch (e) { await reconcileAfterUncertainWrite(e); showError(e); }
   }
 
   async function addHabit() {
@@ -281,19 +292,19 @@ export default function HomeScreen() {
       else await api("/habits", { method: "POST", body: JSON.stringify(input) });
       resetHabitForm(); await loadData();
     }
-    catch (e) { showError(e); }
+    catch (e) { await reconcileAfterUncertainWrite(e); showError(e); }
   }
 
   async function deleteHabit(habit: Habit) {
     try { await api(`/habits/${habit._id}`, { method: "DELETE" }); if (editingHabit === habit._id) { setEditingHabit(null); setNewHabit(""); } await loadData(); }
-    catch (e) { showError(e); }
+    catch (e) { await reconcileAfterUncertainWrite(e); showError(e); }
   }
 
   async function saveProfile() {
     try {
       const result = await api<{ user: User }>("/auth/me", { method: "PATCH", body: JSON.stringify({ name: profileName.trim(), timezone: profileTimezone.trim() }) });
       setUser(result.user); setError(""); setNotice("Profile saved."); await loadData();
-    } catch (e) { showError(e); }
+    } catch (e) { await reconcileAfterUncertainWrite(e); showError(e); }
   }
 
   async function createGoal() {
@@ -357,7 +368,7 @@ export default function HomeScreen() {
       if (done) await api(`/habits/${habit._id}/completions/${today(user?.timezone)}`, { method: "DELETE" });
       else await api(`/habits/${habit._id}/completions`, { method: "POST", body: JSON.stringify({ date: today(user?.timezone) }) });
       await loadData();
-    } catch (e) { showError(e); }
+    } catch (e) { await reconcileAfterUncertainWrite(e); showError(e); }
   }
 
   async function showHabitAnalytics(habit: Habit) {
@@ -373,6 +384,11 @@ export default function HomeScreen() {
     setNotice("");
     const message = e instanceof Error ? e.message : "Something went wrong";
     if (Platform.OS === "web") setError(message); else Alert.alert("Hyper Track", message);
+  }
+
+  async function reconcileAfterUncertainWrite(error: unknown) {
+    if (!(error instanceof ApiRequestError) || !error.mayHaveApplied) return;
+    try { await loadData(); } catch { /* Keep the last known data when reconciliation is temporarily unavailable. */ }
   }
 
   async function logout() { try { await api("/auth/logout", { method: "POST" }); } catch { /* Local sign out should work offline. */ } await clearAllTaskReminders(); await clearOfflineApiData(); await clearToken(); setIsOffline(false); setUser(null); setTasks([]); setHabits([]); setWeekly(null); setGoals([]); setProjects([]); }

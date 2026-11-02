@@ -9,6 +9,7 @@
     "ios": "expo run:ios",
     "validate:config": "expo config --type public --json",
     "doctor": "npm run validate:config && expo install --check",
+    "test": "tsx --test test/*.test.ts",
     "export:web": "expo export --platform web --output-dir dist",
     "typecheck": "tsc --noEmit"
   },
@@ -21,6 +22,7 @@
     "expo-notifications": "~58.1.7",
     "expo-router": "~58.0.29",
     "expo-secure-store": "~58.0.2",
+    "expo-splash-screen": "~58.0.12",
     "expo-status-bar": "~58.0.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -32,6 +34,7 @@
   "devDependencies": {
     "@expo/ngrok": "^4.1.3",
     "@types/react": "~19.3.0",
+    "tsx": "^4.20.5",
     "typescript": "~6.0.3"
   }
 }
