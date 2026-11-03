@@ -8,4 +8,4 @@ coverage/
 !.env.example
 *.log
 .DS_Store
-PROJECT_ANALYSIS/
+# PROJECT_ANALYSIS/
