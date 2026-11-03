@@ -13,18 +13,26 @@ focusRouter.get("/", async (req: AuthRequest, res, next) => {
 });
 focusRouter.post("/", async (req: AuthRequest, res, next) => {
   try {
-    const input = z.object({ plannedMinutes: z.number().int().min(1).max(180), taskId: z.string().regex(/^[a-f\d]{24}$/i).nullable().optional() }).parse(req.body);
+    const input = z.object({ _id: z.string().regex(/^[a-f\d]{24}$/i).optional(), clientMutationId: z.string().min(1).max(100).optional(), startedAt: z.string().datetime().optional(), plannedMinutes: z.number().int().min(1).max(180), taskId: z.string().regex(/^[a-f\d]{24}$/i).nullable().optional() }).parse(req.body);
+    if (input.clientMutationId) {
+      const existing = await FocusSession.findOne({ user: req.userId, clientMutationId: input.clientMutationId }).lean();
+      if (existing) { res.status(200).json({ session: existing }); return; }
+    }
     if (input.taskId && !await Task.exists({ _id: input.taskId, user: req.userId, archivedAt: null })) { res.status(400).json({ error: "Task not found" }); return; }
     if (await FocusSession.exists({ user: req.userId, status: "active" })) { res.status(409).json({ error: "A focus session is already active" }); return; }
-    const session = await FocusSession.create({ user: req.userId, task: input.taskId ?? null, plannedMinutes: input.plannedMinutes, startedAt: new Date() }); res.status(201).json({ session });
+    const startedAt = input.startedAt ? new Date(input.startedAt) : new Date();
+    if (!Number.isFinite(startedAt.getTime()) || startedAt.getTime() > Date.now() + 5 * 60_000) { res.status(400).json({ error: "Invalid focus start time" }); return; }
+    const session = await FocusSession.create({ ...(input._id ? { _id: input._id } : {}), ...(input.clientMutationId ? { clientMutationId: input.clientMutationId } : {}), user: req.userId, task: input.taskId ?? null, plannedMinutes: input.plannedMinutes, startedAt }); res.status(201).json({ session });
   } catch (error) { next(error); }
 });
 focusRouter.patch("/:id", async (req: AuthRequest, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
     const { status } = z.object({ status: z.enum(["completed", "cancelled"]) }).parse(req.body);
-    const session = await FocusSession.findOne({ _id: req.params.id, user: req.userId, status: "active" });
+    const session = await FocusSession.findOne({ _id: req.params.id, user: req.userId });
     if (!session) { res.status(404).json({ error: "Active focus session not found" }); return; }
+    if (session.status === status) { res.json({ session }); return; }
+    if (session.status !== "active") { res.status(409).json({ error: "Focus session was already finalized differently" }); return; }
     session.endedAt = new Date(); session.actualSeconds = Math.max(0, Math.floor((session.endedAt.getTime() - session.startedAt.getTime()) / 1000)); session.status = status; await session.save();
     res.json({ session });
   } catch (error) { next(error); }

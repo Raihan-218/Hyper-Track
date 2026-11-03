@@ -10,10 +10,13 @@ import { awardXp, reverseXp, XP_REWARDS } from "../services/gamification.js";
 export const goalsRouter = Router();
 goalsRouter.use(requireAuth);
 const createSchema = z.object({
+  _id: z.string().regex(/^[a-f\d]{24}$/i).optional(),
+  clientMutationId: z.string().min(1).max(100).optional(),
   title: z.string().trim().min(1).max(120),
   description: z.string().max(2000).optional(),
   targetDate: z.string().datetime().nullable().optional()
 });
+const updateSchema = createSchema.omit({ _id: true, clientMutationId: true }).partial();
 
 goalsRouter.get("/", async (req: AuthRequest, res, next) => {
   try { res.json({ goals: await Goal.find({ user: req.userId, archivedAt: null }).sort({ createdAt: -1 }).lean() }); }
@@ -23,7 +26,11 @@ goalsRouter.get("/", async (req: AuthRequest, res, next) => {
 goalsRouter.post("/", async (req: AuthRequest, res, next) => {
   try {
     const input = createSchema.parse(req.body);
-    const goal = await Goal.create({ ...input, targetDate: input.targetDate ? new Date(input.targetDate) : null, user: req.userId });
+    if (input.clientMutationId) {
+      const existing = await Goal.findOne({ user: req.userId, clientMutationId: input.clientMutationId }).lean();
+      if (existing) { res.status(200).json({ goal: existing }); return; }
+    }
+    const goal = await Goal.create({ ...input, ...(input._id ? { _id: input._id } : {}), targetDate: input.targetDate ? new Date(input.targetDate) : null, user: req.userId });
     res.status(201).json({ goal });
   } catch (error) { next(error); }
 });
@@ -31,7 +38,7 @@ goalsRouter.post("/", async (req: AuthRequest, res, next) => {
 goalsRouter.patch("/:id", async (req: AuthRequest, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) { res.status(400).json({ error: "Invalid goal ID" }); return; }
-    const input = createSchema.partial().extend({ status: z.enum(["active", "completed"]).optional() }).parse(req.body);
+    const input = updateSchema.extend({ status: z.enum(["active", "completed"]).optional() }).parse(req.body);
     const update = { ...input, ...(input.targetDate !== undefined ? { targetDate: input.targetDate ? new Date(input.targetDate) : null } : {}) };
     const goal = await Goal.findOneAndUpdate({ _id: req.params.id, user: req.userId, archivedAt: null }, { $set: update }, { new: true, runValidators: true });
     if (!goal) { res.status(404).json({ error: "Goal not found" }); return; }
@@ -42,8 +49,11 @@ goalsRouter.patch("/:id", async (req: AuthRequest, res, next) => {
 goalsRouter.post("/:id/milestones", async (req: AuthRequest, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) { res.status(400).json({ error: "Invalid goal ID" }); return; }
-    const { title } = z.object({ title: z.string().trim().min(1).max(100) }).parse(req.body);
-    const goal = await Goal.findOneAndUpdate({ _id: req.params.id, user: req.userId, archivedAt: null }, { $push: { milestones: { title } } }, { new: true, runValidators: true });
+    const { title, _id, clientMutationId } = z.object({ title: z.string().trim().min(1).max(100), _id: z.string().regex(/^[a-f\d]{24}$/i).optional(), clientMutationId: z.string().min(1).max(100).optional() }).parse(req.body);
+    const current = await Goal.findOne({ _id: req.params.id, user: req.userId, archivedAt: null });
+    if (!current) { res.status(404).json({ error: "Goal not found" }); return; }
+    if (clientMutationId && current.milestones.some((milestone) => milestone.clientMutationId === clientMutationId)) { res.json({ goal: current }); return; }
+    const goal = await Goal.findOneAndUpdate({ _id: req.params.id, user: req.userId, archivedAt: null }, { $push: { milestones: { ...( _id ? { _id } : {}), ...(clientMutationId ? { clientMutationId } : {}), title } } }, { new: true, runValidators: true });
     if (!goal) { res.status(404).json({ error: "Goal not found" }); return; }
     res.json({ goal });
   } catch (error) { next(error); }

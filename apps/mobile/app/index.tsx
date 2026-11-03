@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { api, ApiRequestError, clearOfflineApiData, isApiOffline } from "../src/lib/api";
+import { useNetInfo } from "@react-native-community/netinfo";
+import { ActivityIndicator, Alert, AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { api, ApiRequestError, clearOfflineApiData, getCachedApiResponse, getPendingSyncCount, isApiOffline, syncPendingChanges } from "../src/lib/api";
 import { clearToken, getToken, saveRefreshToken, saveToken } from "../src/lib/auth";
 import { clearAllTaskReminders, clearTaskReminder, configureNotifications, ensureTaskReminder, setTaskReminder } from "../src/lib/notifications";
 import type { AuthUserDTO, DailyProgressDTO, GoalDTO, HabitDTO, ProjectDTO, TaskDTO } from "@hyper-track/shared";
@@ -20,13 +21,14 @@ type Task = Omit<TaskDTO, "project" | "parentTask"> & {
   project?: { _id: string; name: string } | null;
   parentTask?: { _id: string; title: string } | null;
   archivedAt?: string | null;
+  localOnly?: boolean;
 };
 type Habit = HabitDTO;
 type Goal = GoalDTO;
 type Project = ProjectDTO;
 type AuthResponse = { user: User; token: string; refreshToken: string };
 type WeeklySummary = { timezone: string; days: DailyProgressDTO[]; totals: { tasksCompleted: number; habitCompletions: number } };
-type FocusDTO = { _id: string; startedAt: string; plannedMinutes: number; status: "active" | "completed" | "cancelled" };
+type FocusDTO = { _id: string; startedAt: string; plannedMinutes: number; status: "active" | "completed" | "cancelled"; localOnly?: boolean };
 type GameSummary = { totalXp: number; level: number; levelName: string; currentLevelXp: number; nextLevelXp: number; progress: number; currentStreak: number; longestStreak: number; achievements: Array<{ id: string; name: string; description: string; unlocked: boolean }>; challenges: Array<{ title: string; description: string; progress: number; target: number; completed: boolean }>; recentTransactions?: Array<{ localDate: string; amount: number }> };
 type TaskPage = { tasks: Task[]; total: number; limit: number; page: number };
 
@@ -70,6 +72,7 @@ const toLocalDateTimeInput = (value?: string | null, timezone?: string) => {
 };
 
 export default function HomeScreen() {
+  const network = useNetInfo();
   const { colors, mode, setMode } = useAppTheme();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,10 +125,25 @@ export default function HomeScreen() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isOffline, setIsOffline] = useState(false);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [syncBusy, setSyncBusy] = useState(false);
   const loadRequestId = useRef(0);
 
   async function loadData() {
     const requestId = ++loadRequestId.current;
+    void getPendingSyncCount().then(setPendingSyncCount);
+    const [cachedTasks, cachedHabits, cachedWeekly, cachedGoals, cachedProjects] = await Promise.all([
+      getCachedApiResponse<TaskPage>("/tasks?limit=100"), getCachedApiResponse<{ habits: Habit[] }>("/habits"),
+      getCachedApiResponse<WeeklySummary>("/progress/weekly"), getCachedApiResponse<{ goals: Goal[] }>("/goals"),
+      getCachedApiResponse<{ projects: Project[] }>("/projects")
+    ]);
+    if (requestId === loadRequestId.current && (cachedTasks || cachedHabits || cachedWeekly || cachedGoals || cachedProjects)) {
+      if (cachedTasks) setTasks(cachedTasks.tasks);
+      if (cachedHabits) setHabits(cachedHabits.habits);
+      if (cachedWeekly) setWeekly(cachedWeekly);
+      if (cachedGoals) setGoals(cachedGoals.goals);
+      if (cachedProjects) setProjects(cachedProjects.projects);
+    }
     const [firstTaskPage, habitData, progressData, goalData, projectData] = await Promise.all([
       api<TaskPage>("/tasks?limit=100"), api<{ habits: Habit[] }>("/habits"), api<WeeklySummary>("/progress/weekly"), api<{ goals: Goal[] }>("/goals"), api<{ projects: Project[] }>("/projects")
     ]);
@@ -143,8 +161,17 @@ export default function HomeScreen() {
     try { const focus = await api<{ active: FocusDTO | null }>("/focus"); if (requestId === loadRequestId.current) setFocusSession(focus.active); } catch { /* Focus is optional when offline. */ }
     try { const summary = await api<GameSummary>("/gamification"); if (requestId === loadRequestId.current) setGameSummary(summary); } catch { /* Keep the core dashboard usable if rewards are temporarily unavailable. */ }
     if (requestId !== loadRequestId.current) return;
-    await Promise.all(allTasks.filter((task) => !task._id.startsWith("local-") && task.reminderAt).map((task) => ensureTaskReminder(task._id, task.title, task.reminderAt).catch(() => undefined)));
+    await Promise.all(allTasks.filter((task) => !task.localOnly && task.reminderAt).map((task) => ensureTaskReminder(task._id, task.title, task.reminderAt).catch(() => undefined)));
+    setPendingSyncCount(await getPendingSyncCount());
     setIsOffline(isApiOffline());
+  }
+
+  async function retrySync() {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    try { await syncPendingChanges(); await loadData(); }
+    catch { setPendingSyncCount(await getPendingSyncCount()); }
+    finally { setSyncBusy(false); }
   }
 
   function resetTaskForm() {
@@ -211,6 +238,22 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
+    if (!user || network.isConnected !== true) {
+      if (network.isConnected === false) setIsOffline(true);
+      return;
+    }
+    void syncPendingChanges().then(() => loadData()).catch(() => setIsOffline(isApiOffline()));
+  }, [user, network.isConnected]);
+
+  useEffect(() => {
+    if (!user || network.isConnected === false) return;
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void syncPendingChanges().then(() => loadData()).catch(() => setIsOffline(isApiOffline()));
+    });
+    return () => subscription.remove();
+  }, [user, network.isConnected]);
+
+  useEffect(() => {
     if (!user || tab !== "profile" || profileSection !== "progress") return;
     const end = today(user.timezone); const date = new Date(`${end}T12:00:00Z`);
     if (analyticsRange === "week") date.setUTCDate(date.getUTCDate() - 6);
@@ -258,7 +301,7 @@ export default function HomeScreen() {
       const result = editingTask
         ? await api<{ task: Task }>(`/tasks/${editingTask}`, { method: "PATCH", body: JSON.stringify(input) })
         : await api<{ task: Task }>("/tasks", { method: "POST", body: JSON.stringify(input) });
-      if (result.task._id.startsWith("local-")) {
+      if (result.task.localOnly) {
         if (reminderAt) showError("Task saved for sync. Its reminder will be scheduled once the task reaches the server.");
       } else {
         try { await setTaskReminder(result.task._id, result.task.title, reminderAt); } catch (e) { showError(e); }
@@ -454,7 +497,9 @@ export default function HomeScreen() {
         <View><Text style={styles.brandSmall}>HYPER TRACK</Text><Text style={[styles.greeting, { color: colors.text }]}>{timeGreeting}, {user.name.split(" ")[0]} 👋</Text><Text style={styles.statLabel}>{new Date(`${localToday}T12:00:00Z`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })}</Text></View>
         <Pressable onPress={logout} style={styles.logout}><Text style={styles.logoutText}>Log out</Text></Pressable>
       </View>
-      {isOffline && <Text style={styles.offlineNotice}>Offline · new tasks and habits will sync when you reconnect. Other changes need a connection.</Text>}
+      {(isOffline || network.isConnected === false || pendingSyncCount > 0) && <Pressable accessibilityRole="button" onPress={retrySync} disabled={syncBusy} style={styles.offlineNotice}>
+        <Text style={styles.offlineNoticeText}>{network.isConnected === false || isOffline ? "Offline · saved data is available." : syncBusy ? "Syncing saved changes…" : `${pendingSyncCount} saved change${pendingSyncCount === 1 ? "" : "s"} waiting to sync.`} Tap to retry. XP and historical analytics refresh after sync.</Text>
+      </Pressable>}
       {tab === "calendar" && <CalendarScreen today={localToday} timezone={user.timezone || "UTC"} tasks={tasks} initialDate={selectedDate} onDateChange={setSelectedDate} onCreateTask={(date) => { resetTaskForm(); setTaskPlannedDate(date); setTab("tasks"); }} onEditTask={(task) => { setTab("tasks"); beginEditTask(task as Task); }} onToggleTask={(task) => toggleTask(task as Task)} onOpenProject={() => selectDestination("projects")} />}
       {tab === "profile" && <View style={styles.section}><View style={styles.optionRow}>{(["progress", "settings"] as const).map((value) => <Pressable key={value} onPress={() => setProfileSection(value)} style={[styles.optionPill, profileSection === value && styles.optionPillActive]}><Text style={[styles.optionPillText, profileSection === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View><View style={[styles.optionRow, { marginTop: 10 }]}>{(["projects", "goals"] as const).map((destination) => <Pressable key={destination} accessibilityRole="button" onPress={() => selectDestination(destination)} style={styles.optionPill}><Text style={styles.optionPillText}>{destination}</Text></Pressable>)}</View></View>}
       {tab === "profile" && profileSection === "progress" && <View style={styles.section}><Text style={[styles.sectionTitle, { color: colors.text }]}>Insights</Text><View style={styles.optionRow}>{(["day", "week", "month"] as const).map((value) => <Pressable key={value} onPress={() => setAnalyticsRange(value)} style={[styles.optionPill, analyticsRange === value && styles.optionPillActive]}><Text style={[styles.optionPillText, analyticsRange === value && styles.optionPillTextActive]}>{value}</Text></Pressable>)}</View><Text style={[styles.progressTotals, { color: colors.textMuted }]}>{weekly?.totals.tasksCompleted ?? 0} tasks completed · {weekly?.totals.habitCompletions ?? 0} habit check-ins</Text>{weekly?.days.map((day) => { const intensity = Math.min(1, (day.tasksCompleted + day.habitsCompleted) / 6); const date = new Date(`${day.date}T12:00:00Z`); const label = analyticsRange === "day" ? "Today" : date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }); return <View key={day.date} style={styles.dayRow}><Text style={styles.dayLabel}>{label}</Text><View style={styles.barTrack}><View style={[styles.barFill, { width: `${Math.max(4, intensity * 100)}%` }]} /></View><Text style={styles.dayCount}>{day.tasksCompleted + day.habitsCompleted}</Text></View>; })}</View>}
@@ -471,7 +516,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#0B1020" }, center: { flex: 1, backgroundColor: "#0B1020", alignItems: "center", justifyContent: "center", gap: 14 },
   authWrap: { flexGrow: 1, justifyContent: "center", padding: 26, paddingTop: 56 }, logo: { width: 54, height: 54, borderRadius: 18, backgroundColor: "#A5B4FC", alignItems: "center", justifyContent: "center", marginBottom: 20 }, logoText: { color: "#0B1020", fontSize: 28, fontWeight: "900" },
   brand: { color: "#A5B4FC", letterSpacing: 3, fontSize: 12, fontWeight: "800", marginBottom: 30 }, heading: { color: "#F4F6FF", fontSize: 32, fontWeight: "800", letterSpacing: -1, marginBottom: 8 }, muted: { color: "#929BB4", fontSize: 14, lineHeight: 22 }, input: { backgroundColor: "#151C30", borderColor: "#29324A", borderWidth: 1, borderRadius: 14, color: "#F4F6FF", paddingHorizontal: 15, paddingVertical: 14, fontSize: 15, marginTop: 14 },
-  primary: { backgroundColor: "#A5B4FC", borderRadius: 14, alignItems: "center", justifyContent: "center", padding: 16, marginTop: 22, minHeight: 54 }, primaryText: { color: "#0B1020", fontWeight: "800", fontSize: 15 }, pressed: { opacity: 0.8 }, disabled: { opacity: 0.5 }, switchAuth: { alignItems: "center", marginTop: 22 }, link: { color: "#C7D2FE", fontWeight: "700" }, error: { color: "#FDA4AF", marginTop: 12, lineHeight: 20 }, success: { color: "#86EFAC", marginTop: 12, lineHeight: 20 }, offlineNotice: { color: "#FCD34D", fontSize: 12, padding: 12, backgroundColor: "#2A2518", borderRadius: 12, lineHeight: 18 },
+  primary: { backgroundColor: "#A5B4FC", borderRadius: 14, alignItems: "center", justifyContent: "center", padding: 16, marginTop: 22, minHeight: 54 }, primaryText: { color: "#0B1020", fontWeight: "800", fontSize: 15 }, pressed: { opacity: 0.8 }, disabled: { opacity: 0.5 }, switchAuth: { alignItems: "center", marginTop: 22 }, link: { color: "#C7D2FE", fontWeight: "700" }, error: { color: "#FDA4AF", marginTop: 12, lineHeight: 20 }, success: { color: "#86EFAC", marginTop: 12, lineHeight: 20 }, offlineNotice: { padding: 12, backgroundColor: "#2A2518", borderRadius: 12 }, offlineNoticeText: { color: "#FCD34D", fontSize: 12, lineHeight: 18 },
   page: { paddingHorizontal: 24, paddingTop: 28, paddingBottom: 42, maxWidth: 1200, width: "100%", alignSelf: "center" }, topRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }, brandSmall: { color: "#A5B4FC", letterSpacing: 2, fontSize: 10, fontWeight: "900", marginBottom: 7 }, greeting: { color: "#F4F6FF", fontSize: 25, fontWeight: "800", letterSpacing: -0.6 }, logout: { borderColor: "#303A54", borderWidth: 1, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 12 }, logoutText: { color: "#B7C0D7", fontSize: 12, fontWeight: "700" },
   hero: { backgroundColor: "#1B2440", borderRadius: 24, padding: 22, borderWidth: 1, borderColor: "#2D3A60", overflow: "hidden" }, eyebrow: { color: "#B8C3FF", letterSpacing: 2, fontSize: 9, fontWeight: "900", marginBottom: 12 }, heroTitle: { color: "#F4F6FF", fontSize: 31, fontWeight: "900", lineHeight: 35, letterSpacing: -1 }, heroSub: { color: "#AEB9D6", fontSize: 13, lineHeight: 20, marginTop: 12 }, heroStats: { flexDirection: "row", alignItems: "center", gap: 24, marginTop: 24, paddingTop: 18, borderTopColor: "#394666", borderTopWidth: 1 }, statNumber: { color: "#FFFFFF", fontSize: 22, fontWeight: "800" }, statLabel: { color: "#AEB9D6", fontSize: 11, marginTop: 4 }, statDivider: { width: 1, height: 34, backgroundColor: "#394666" },
   tabs: { backgroundColor: "#131A2D", borderRadius: 13, padding: 4, marginTop: 22, marginBottom: 6, maxHeight: 44 }, tabContent: { flexDirection: "row", gap: 3 }, tab: { minWidth: 64, alignItems: "center", paddingVertical: 11, paddingHorizontal: 8, borderRadius: 10 }, activeTab: { backgroundColor: "#293456" }, tabText: { color: "#8F9AB5", fontSize: 12, fontWeight: "700" }, activeTabText: { color: "#DDE2FF" }, section: { marginTop: 22 }, sectionHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }, sectionTitle: { color: "#F4F6FF", fontSize: 19, fontWeight: "800", letterSpacing: -0.4 }, sectionCount: { color: "#929BB4", fontSize: 11 }, addRow: { flexDirection: "row", gap: 8, alignItems: "center", marginBottom: 8 }, addInput: { flex: 1, marginTop: 0, paddingVertical: 12 }, addButton: { width: 48, height: 48, borderRadius: 14, backgroundColor: "#A5B4FC", alignItems: "center", justifyContent: "center" }, addButtonText: { color: "#0B1020", fontSize: 26, fontWeight: "500", marginTop: -2 },

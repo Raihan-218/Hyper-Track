@@ -16,6 +16,7 @@ async function captureHabitSchedule(userId: string, habit: { _id: unknown; name:
   await HabitScheduleSnapshot.create({ user: userId, habit: habit._id, name: habit.name, frequency: habit.frequency, targetPerWeek: habit.targetPerWeek, daysOfWeek: habit.daysOfWeek, validFromAt });
 }
 const createSchema = z.object({
+  _id: z.string().regex(/^[a-f\d]{24}$/i).optional(),
   name: z.string().trim().min(1).max(100),
   description: z.string().max(1000).optional(),
   category: z.string().trim().max(40).optional(),
@@ -94,7 +95,7 @@ habitsRouter.post("/", async (req: AuthRequest, res, next) => {
         res.status(200).json({ habit: existing }); return;
       }
     }
-    const habit = await Habit.create({ ...input, user: req.userId });
+    const habit = await Habit.create({ ...input, ...(input._id ? { _id: input._id } : {}), user: req.userId });
     await captureHabitSchedule(req.userId!, habit, habit.createdAt);
     res.status(201).json({ habit });
   } catch (error) { next(error); }

@@ -9,17 +9,21 @@ process.env.JWT_SECRET = "test-secret-that-is-long-enough-to-pass-validation";
 process.env.JWT_EXPIRES_IN = "15m";
 process.env.CORS_ORIGIN = "http://localhost";
 
-const [{ tasksRouter }, { habitsRouter }, { calendarRouter }, { gamificationRouter }, { focusRouter }, { exportRouter }, { errorHandler }, { requireAuth }, { Task }, { Habit }, { TaskCompletion }, { HabitCompletion }, { HabitScheduleSnapshot }, { User }, { XPTransaction }, { UserGamification }] = await Promise.all([
+const [{ tasksRouter }, { habitsRouter }, { calendarRouter }, { gamificationRouter }, { focusRouter }, { exportRouter }, { projectsRouter }, { goalsRouter }, { errorHandler }, { requireAuth }, { Task }, { Habit }, { Project }, { Goal }, { TaskCompletion }, { HabitCompletion }, { HabitScheduleSnapshot }, { User }, { XPTransaction }, { UserGamification }] = await Promise.all([
   import("../src/routes/tasks.routes.js"),
   import("../src/routes/habits.routes.js"),
   import("../src/routes/calendar.routes.js"),
   import("../src/routes/gamification.routes.js"),
   import("../src/routes/focus.routes.js"),
   import("../src/routes/export.routes.js"),
+  import("../src/routes/projects.routes.js"),
+  import("../src/routes/goals.routes.js"),
   import("../src/middleware/errors.js"),
   import("../src/middleware/auth.js"),
   import("../src/models/Task.js"),
   import("../src/models/Habit.js"),
+  import("../src/models/Project.js"),
+  import("../src/models/Goal.js"),
   import("../src/models/TaskCompletion.js"),
   import("../src/models/HabitCompletion.js"),
   import("../src/models/HabitScheduleSnapshot.js"),
@@ -131,6 +135,47 @@ test("task creation accepts the mobile editor's explicit nullable optional field
     });
     assert.equal(result.statusCode, 201);
   } finally { Task.create = original; }
+});
+
+test("offline task creation preserves its client-generated ObjectId and mutation identity", async () => {
+  const originalFind = Task.findOne; const originalCreate = Task.create;
+  let created: Record<string, unknown> | undefined;
+  Task.findOne = (() => ({ lean: async () => null })) as typeof Task.findOne;
+  Task.create = (async (input: Record<string, unknown>) => { created = input; return { ...input, _id: input._id }; }) as typeof Task.create;
+  try {
+    const localId = "66b9a1812000000000000001";
+    const result = await callRoute(tasksRouter, "post", "/", { _id: localId, clientMutationId: `offline-${localId}`, title: "Offline task" });
+    assert.equal(result.statusCode, 201);
+    assert.equal(created?._id, localId);
+    assert.equal(created?.clientMutationId, `offline-${localId}`);
+    assert.equal(created?.user, userId);
+  } finally { Task.findOne = originalFind; Task.create = originalCreate; }
+});
+
+test("project create retries with the same client mutation ID return the existing owned project", async () => {
+  const originalFind = Project.findOne; const originalCreate = Project.create;
+  let writes = 0;
+  Project.findOne = (() => ({ lean: async () => ({ _id: "66b9a1812000000000000002", user: userId, name: "Offline project" }) })) as typeof Project.findOne;
+  Project.create = (async () => { writes += 1; return {}; }) as typeof Project.create;
+  try {
+    const result = await callRoute(projectsRouter, "post", "/", { _id: "66b9a1812000000000000002", clientMutationId: "offline-project-1", name: "Offline project" });
+    assert.equal(result.statusCode, 200);
+    assert.equal(writes, 0);
+    assert.equal((result.body as { project: { user: string } }).project.user, userId);
+  } finally { Project.findOne = originalFind; Project.create = originalCreate; }
+});
+
+test("goal create retries with the same client mutation ID return the existing owned goal", async () => {
+  const originalFind = Goal.findOne; const originalCreate = Goal.create;
+  let writes = 0;
+  Goal.findOne = (() => ({ lean: async () => ({ _id: "66b9a1812000000000000003", user: userId, title: "Offline goal" }) })) as typeof Goal.findOne;
+  Goal.create = (async () => { writes += 1; return {}; }) as typeof Goal.create;
+  try {
+    const result = await callRoute(goalsRouter, "post", "/", { _id: "66b9a1812000000000000003", clientMutationId: "offline-goal-1", title: "Offline goal" });
+    assert.equal(result.statusCode, 200);
+    assert.equal(writes, 0);
+    assert.equal((result.body as { goal: { user: string } }).goal.user, userId);
+  } finally { Goal.findOne = originalFind; Goal.create = originalCreate; }
 });
 
 test("task completion records one completion event and awards XP after a valid status update", async () => {

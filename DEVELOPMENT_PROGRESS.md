@@ -1,6 +1,47 @@
 # Hyper Track 2.0 development progress
 
-Updated 2026-11-02
+Updated 2026-11-03
+
+## Offline-first architecture implementation — 2026-11-03
+
+### Architecture audit and plan
+
+The attached offline-first brief was reviewed against current mobile and API code. The mobile API helper was the single HTTP boundary, but data reads were network-first with a global AsyncStorage response cache. Only task and habit creation had an offline queue; updates, completions, deletes, projects, goals, profile changes, focus sessions, and offline auth bootstrap did not have local-first workflows. Tokens are already stored in SecureStore on native. The API has idempotent create semantics for task/habit records through `clientMutationId`, but no generic idempotency endpoint, revisions, tombstones, incremental sync feed, or batch sync. XP, completion history, and schedule snapshots are server-owned; duplicating their calculations or replaying unsupported writes could create data loss or duplicate rewards.
+
+The implementation plan, schema, synchronization prerequisites, and migration risks are recorded in `MOBILE_OFFLINE_ARCHITECTURE.md`. SQLite foundations, local mutations for supported entities, offline cache hydration, queue status UI, and automatic retry triggers are now implemented. This remains an intermediate offline mode, not a complete cross-device sync system.
+
+### Delivered in this pass
+
+- Added Expo SDK 58-compatible `expo-sqlite ~58.0.15` and `@react-native-community/netinfo 12.0.1`.
+- Added additive, versioned SQLite schema with account cache, feature tables, completion facts, local XP/progress storage, durable sync queue, metadata, indexes, and relational constraints where they do not erase historical facts.
+- Added account-scoped SQLite API cache on native and a web-specific AsyncStorage compatibility implementation. The split avoids a missing-WASM bundling issue in this installed SDK's `expo-sqlite` web package while keeping SQLite native.
+- Successful API responses are cached by authenticated account. Legacy path-only AsyncStorage cache entries migrate only when their cached profile matches the signed token subject. Feature response payloads are normalized into the corresponding native SQLite tables while retaining source payloads.
+- Dashboard data hydrates from local cached responses before refreshing through the API. Previously authenticated offline startup can use cached `/auth/me` while a token remains stored; auth responses seed that cache.
+- Offline task, habit, project, goal, milestone, profile, and focus operations now update cached responses and enqueue writes through the storage adapters. Task/habit creation and generic local entity creation use stable Mongo-compatible IDs; API create routes were extended with authenticated duplicate-create handling. Existing task/habit create paths keep their current mutation IDs.
+- Outbox replay is serialized, sends an idempotency header, retains failures with exponential retry, and acknowledges only successful requests (plus already-absent deletes). FIFO dependencies are preserved: a backed-off create blocks later edits until it is acknowledged. Reconnect, app foreground, GET refresh, and manual retry trigger synchronization. Offline task completion is replayed after its create so the existing recurrence/XP server logic remains authoritative.
+- Projects and parent task relations are repaired when related records arrive in a later cached response. Local task/habit/project/goal/archive and focus/profile edits preserve ownership scoping. SQLite account data survives logout so a pending account queue is not silently discarded.
+- Logout and token-refresh cleanup clear legacy AsyncStorage data without silently deleting account-scoped SQLite records or pending writes.
+- Added schema tests for domain coverage, idempotent additive initialization, unique completion/XP/idempotency identifiers, and destructive migration prohibition.
+
+### Validation
+
+- `npm run typecheck` — passed.
+- `npm test -w @hyper-track/mobile` — 12 passed, including offline transforms, SQLite schema/migration coverage, and outbox FIFO/backoff policy.
+- `npm run test:api` — 28 passed, including stable task IDs and idempotent project/goal create retries.
+- `npm run validate:expo` — passed.
+- `npm run doctor` — passed using Expo's local bundled SDK compatibility map; network validation was unavailable.
+- `npm run export:web` — passed after introducing platform-specific storage modules. The initial export exposed an absent WASM asset in this installed `expo-sqlite` package; native SQLite is isolated from the web bundle.
+- `apps/mobile/android/gradlew.bat assembleDebug` — passed (BUILD SUCCESSFUL); canonical debug APK at `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk` (265,651,845 bytes; debug build, four ABIs).
+- `npm run android` could not install or launch because the ADB daemon failed to start (`could not read ok from ADB Server`). Android APK installation, app launch, SQLite initialization, and offline/reconnect flows are therefore not verified in this pass.
+
+### Remaining critical work and known limitations
+
+- The current queue can replay the app's supported HTTP mutations, but the API has no general incremental change feed, server revisions, conflict protocol, or delete tombstones. Cross-device merge/conflict correctness is not implemented.
+- Some writes are naturally idempotent through existing resource state/history logic, but queued mutation support has not yet been validated against a real MongoDB account. Server failures remain queued and are visible to users; no conflict UI or dead-letter recovery UI exists.
+- Feature tables receive snapshots from successful responses and offline reads use cached API payloads, but screen operations have not been fully extracted behind feature repositories. There is no resumable first-run server-to-local import beyond GET cache population and safe legacy AsyncStorage cache/queue import.
+- No offline XP calculation is implemented; existing server XP transactions remain authoritative. Historical rows are stored only when actual event identifiers/data are returned; summary-only API data is not converted into invented transaction records.
+- Cross-account device isolation, process-restart persistence, queue dependency ordering, replay behavior and offline creation/edit/completion still need end-to-end device tests. Android installation was blocked by ADB.
+- API model/route changes add client mutation IDs and duplicate create handling. Production rollout should verify MongoDB unique indexes are built safely before users run the new client. Do not advertise this intermediate build as satisfying full offline-first acceptance criteria.
 
 ## Milestone delivery status
 

@@ -18,6 +18,7 @@ function localDate(date: Date, timezone: string): string {
   return `${fields.year}-${fields.month}-${fields.day}`;
 }
 const createSchema = z.object({
+  _id: z.string().regex(/^[a-f\d]{24}$/i).optional(),
   title: z.string().trim().min(1).max(120),
   description: z.string().max(2000).optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
@@ -75,7 +76,7 @@ tasksRouter.post("/", async (req: AuthRequest, res, next) => {
     if (input.parentTaskId && !await Task.exists({ _id: input.parentTaskId, user: req.userId, archivedAt: null, parentTask: null })) { res.status(400).json({ error: "Parent task not found" }); return; }
     const { projectId, parentTaskId, ...taskInput } = input;
     const completedAt = input.status === "done" ? new Date() : undefined;
-    const task = await Task.create({ ...taskInput, project: projectId || null, parentTask: parentTaskId || null, dueDate: input.dueDate ? new Date(input.dueDate) : undefined, reminderAt: input.reminderAt ? new Date(input.reminderAt) : null, completedAt, user: req.userId });
+    const task = await Task.create({ ...taskInput, ...(input._id ? { _id: input._id } : {}), project: projectId || null, parentTask: parentTaskId || null, dueDate: input.dueDate ? new Date(input.dueDate) : undefined, reminderAt: input.reminderAt ? new Date(input.reminderAt) : null, completedAt, user: req.userId });
     if (task.plannedDate) await TaskPlanSnapshot.create({ user: req.userId, task: task._id, title: task.title, priority: task.priority, plannedDate: task.plannedDate, assignedAt: task.createdAt });
     if (completedAt) {
       const user = await User.findById(req.userId).select("timezone").lean();

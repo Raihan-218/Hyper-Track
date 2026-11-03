@@ -12,6 +12,7 @@ const projectSchema = z.object({
   description: z.string().max(2000).optional(),
   status: z.enum(["active", "completed"]).optional()
 });
+const createSchema = projectSchema.extend({ _id: z.string().regex(/^[a-f\d]{24}$/i).optional(), clientMutationId: z.string().min(1).max(100).optional() });
 
 projectsRouter.get("/", async (req: AuthRequest, res, next) => {
   try { res.json({ projects: await Project.find({ user: req.userId, archivedAt: null }).sort({ createdAt: -1 }).lean() }); }
@@ -20,8 +21,12 @@ projectsRouter.get("/", async (req: AuthRequest, res, next) => {
 
 projectsRouter.post("/", async (req: AuthRequest, res, next) => {
   try {
-    const input = projectSchema.parse(req.body);
-    const project = await Project.create({ ...input, user: req.userId });
+    const input = createSchema.parse(req.body);
+    if (input.clientMutationId) {
+      const existing = await Project.findOne({ user: req.userId, clientMutationId: input.clientMutationId }).lean();
+      if (existing) { res.status(200).json({ project: existing }); return; }
+    }
+    const project = await Project.create({ ...input, ...(input._id ? { _id: input._id } : {}), user: req.userId });
     res.status(201).json({ project });
   } catch (error) { next(error); }
 });
